@@ -1,0 +1,22 @@
+# Ignore docs directory
+docs/
+
+# Ignore dataset directory
+dataset/
+
+# Ignore everything in figures directory
+figures/**/*
+figure/**/*
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Jupyter Notebook cache
+.ipynb_checkpoints/
+
+# Other common cache files
+.cache/
+.sass-cache/
