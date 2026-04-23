@@ -1,9 +1,7 @@
 # Ignore docs directory
 docs/
 
-# Ignore dataset directory
 dataset/
-
 # Ignore everything in figures directory
 figures/**/*
 figure/**/*
