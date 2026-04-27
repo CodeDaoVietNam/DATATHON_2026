@@ -18,3 +18,33 @@ __pycache__/
 # Other common cache files
 .cache/
 .sass-cache/
+
+# ===== LaTeX build files =====
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.bbl
+*.blg
+
+# ===== Bibliography =====
+*.bcf
+*.run.xml
+
+# ===== Temporary files =====
+*.nav
+*.snm
+*.vrb
+
+# ===== Editor files =====
+.vscode/
+*.code-workspace
+
+# ===== OS files =====
+.DS_Store
+Thumbs.db
