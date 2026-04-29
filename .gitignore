@@ -1,5 +1,11 @@
 # Ignore docs directory
 docs/
+docs/
+!docs/
+docs/*
+!docs/CODEBASE_OVERVIEW.md
+!docs/FORECASTING_PIPELINE.md
+!docs/REPO_HANDOFF.md
 
 dataset/
 # Ignore everything in figures directory
@@ -48,3 +54,4 @@ __pycache__/
 # ===== OS files =====
 .DS_Store
 Thumbs.db
+.codex

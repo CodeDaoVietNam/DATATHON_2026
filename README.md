@@ -1,39 +1,57 @@
-# Datathon 2026 — Team [Tên Team]
+# Datathon 2026
 
-## Cấu trúc thư mục
-```bash 
-datathon-2026/
-├── data/raw/          # 15 file CSV gốc (không upload lên GitHub)
-├── data/processed/    # Data sau khi clean
-├── notebooks/         # Jupyter notebooks theo thứ tự
-├── src/               # Python modules
-├── figures/           # Charts cho report
-├── submissions/       # submission.csv
-└── report/            # report.pdf
+## Trang doc nhanh
+
+Neu can hieu repo nhanh, doc:
+
+- `docs/CODEBASE_OVERVIEW.md`
+- `docs/FORECASTING_PIPELINE.md`
+- `docs/REPO_HANDOFF.md`
+
+## Entry point hien tai
+
+Pipeline forecasting nen chay hien tai:
+
+- `notebooks/06_forecasting_v2_recursive.ipynb`
+- `scripts/run_forecasting_v2.py`
+
+Notebook forecasting cu nam o:
+
+- `notebooks/05_forecasting_model.ipynb`
+
+Script/notebook import logic tu:
+
+- `src/utils/feature_engineering.py`
+- `src/utils/models.py`
+- `src/utils/utils.py`
+- `src/utils/forecasting_v2.py`
+
+## Data path thuc te
+
+Notebook modeling hien dang doc CSV tu:
+
+- `dataset/`
+
+Va xuat submission tai:
+
+- `dataset/submission.csv`
+- `dataset/submission_v2.csv`
+
+## Cach chay v2
+
+Trong notebook:
+
+- mo `notebooks/06_forecasting_v2_recursive.ipynb`
+- Run All
+
+Bang script:
+
+```bash
+python scripts/run_forecasting_v2.py
 ```
 
-## Cách chạy lại kết quả
+## Ghi chu
 
-# 1. Cài đặt
-pip install -r requirements.txt
-
-# 2. Đặt data vào đúng chỗ
-cp path/to/data/*.csv data/raw/
-
-# 3. Chạy theo thứ tự
-jupyter nbconvert --to notebook --execute notebooks/01_data_quality.ipynb
-jupyter nbconvert --to notebook --execute notebooks/02_time_series_properties.ipynb
-jupyter nbconvert --to notebook --execute notebooks/04_feature_engineering.ipynb
-jupyter nbconvert --to notebook --execute notebooks/05_model.ipynb
-
-# 4. File submission xuất hiện tại
-submissions/submission.csv
-
-## Kết quả
-- Kaggle MAE: [điền sau]
-- Kaggle RMSE: [điền sau]  
-- Kaggle R²: [điền sau]
-
-## Team
-- [Tên 1] — [Phần đảm nhận]
-- [Tên 2] — [Phần đảm nhận]
+- Repo hien van theo huong `notebook-first`.
+- `scripts/run_forecasting_v2.py` la pipeline sach hon cho backtest va submission.
+- README cu da khong con khop hoan toan voi codebase, nen cac file trong `docs/` moi la mo ta thuc te hon.
