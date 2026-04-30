@@ -635,9 +635,9 @@ def plot_stockout_loss_by_category(
     
     _label_hbars(ax, fmt_fn=lambda v: _fmt_number(v, 1))
     
-    ax.set_title('Estimated Lost Revenue do Stockout theo Category')
-    ax.set_xlabel('Lost revenue estimate (Triệu VNĐ)')
-    ax.set_ylabel('Category')
+    ax.set_title('Doanh thu ước tính bị mất do hết hàng — Phân theo Danh mục')
+    ax.set_xlabel('Doanh thu ước tính bị mất (Triệu VNĐ)')
+    ax.set_ylabel('Danh mục')
     format_spines(ax)
     plt.tight_layout()
     if save_fig:
@@ -665,9 +665,9 @@ def plot_top_products_lost_revenue(
     
     _label_hbars(ax, fmt_fn=lambda v: _fmt_number(v, 1))
     
-    ax.set_title(f'Top {top_n} Products theo Estimated Lost Revenue')
-    ax.set_xlabel('Lost revenue estimate (Triệu VNĐ)')
-    ax.set_ylabel('Product')
+    ax.set_title(f'Top {top_n} sản phẩm có Doanh thu mất mát ước tính cao nhất')
+    ax.set_xlabel('Doanh thu ước tính bị mất (Triệu VNĐ)')
+    ax.set_ylabel('Sản phẩm')
     format_spines(ax)
     plt.tight_layout()
     if save_fig:
@@ -1212,7 +1212,7 @@ def plot_revenue_leakage_impact(
     bars = ax.barh(labels, [v / 1e9 for v in values], color=colors,
                    alpha=0.85, height=0.4)
 
-    ax.set_title('Quy mô Thất thoát Tài chính (Revenue Leakage)',
+    ax.set_title('Quy mô Thất thoát Tài chính',
                  fontsize=14, fontweight='bold')
     ax.set_xlabel('Giá trị (Tỷ VNĐ)')
     _label_hbars(ax, fmt_fn=lambda v: f"{v:.2f} Tỷ", offset=0.02)
