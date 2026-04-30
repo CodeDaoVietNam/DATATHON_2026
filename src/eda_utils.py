@@ -622,12 +622,7 @@ def estimate_stockout_impact(
 def plot_stockout_loss_by_category(
     loss_df: pd.DataFrame, save_fig: bool = True
 ) -> None:
-    """Plot estimated lost revenue by category due to stockout.
-    
-    Parameters:
-        loss_df (pd.DataFrame): Stockout loss dataframe from estimate_stockout_impact
-        save_fig (bool): Whether to save figure to disk
-    """
+    """Plot estimated lost revenue by category due to stockout."""
     set_plot_style()
     grouped = loss_df.groupby('category').agg({
         'lost_revenue_est': 'sum'
@@ -637,7 +632,8 @@ def plot_stockout_loss_by_category(
     fig, ax = plt.subplots(figsize=(12, 6))
     ax.barh(grouped['category'], grouped['lost_revenue_est'] / 1e6,
             color=PALETTE['stockout'], alpha=0.9)
-    _label_hbars(ax, fmt_fn=lambda v: _fmt_number(v / 1e6, 1))
+    
+    _label_hbars(ax, fmt_fn=lambda v: _fmt_number(v, 1))
     
     ax.set_title('Estimated Lost Revenue do Stockout theo Category')
     ax.set_xlabel('Lost revenue estimate (Triệu VNĐ)')
@@ -653,13 +649,7 @@ def plot_stockout_loss_by_category(
 def plot_top_products_lost_revenue(
     loss_df: pd.DataFrame, top_n: int = 20, save_fig: bool = True
 ) -> None:
-    """Plot the top products by estimated lost revenue from stockout.
-    
-    Parameters:
-        loss_df (pd.DataFrame): Stockout loss dataframe from estimate_stockout_impact
-        top_n (int): Number of top products to display
-        save_fig (bool): Whether to save figure to disk
-    """
+    """Plot the top products by estimated lost revenue from stockout."""
     set_plot_style()
     product_loss = loss_df.groupby(
         ['product_id', 'product_name']
@@ -672,7 +662,8 @@ def plot_top_products_lost_revenue(
     ax.barh(top_products['product_name'],
             top_products['lost_revenue_est'] / 1e6,
             color=PALETTE['blue'], alpha=0.9)
-    _label_hbars(ax, fmt_fn=lambda v: _fmt_number(v / 1e6, 1))
+    
+    _label_hbars(ax, fmt_fn=lambda v: _fmt_number(v, 1))
     
     ax.set_title(f'Top {top_n} Products theo Estimated Lost Revenue')
     ax.set_xlabel('Lost revenue estimate (Triệu VNĐ)')
@@ -775,16 +766,16 @@ def build_customer_rfm(master_df: pd.DataFrame) -> pd.DataFrame:
     def _assign_segment(row: pd.Series) -> str:
         """Assign RFM segment based on scores."""
         if row['R'] >= 4 and row['F'] >= 4:
-            return 'Champions'
+            return 'Khách VIP'
         if row['R'] >= 3 and row['F'] >= 3:
-            return 'Loyal Customers'
+            return 'Khách Trung Thành'
         if row['R'] >= 4 and row['F'] <= 2:
-            return 'New Customers'
+            return 'Khách Gần Đây'
         if row['R'] <= 2 and row['F'] >= 4:
-            return 'At Risk'
+            return 'Nguy Cơ Rời Bỏ'
         if row['R'] <= 2 and row['F'] <= 2:
-            return 'Lost'
-        return 'Need Attention'
+            return 'Đã Rời Bỏ'
+        return 'Cần Chăm Sóc'
 
     customer_df['segment'] = customer_df.apply(_assign_segment, axis=1)
     return customer_df
@@ -942,7 +933,7 @@ def plot_promotion_margins_analysis(
 
     bars1 = ax1.bar(labels_1, values_1, color=colors_1, alpha=0.85,
                     width=0.5)
-    ax1.set_title('1. Tác động của Promo tới Margin',
+    ax1.set_title('Tác động của Promo tới Margin',
                   fontsize=13, fontweight='bold')
     ax1.set_ylabel('Gross Margin (%)')
     ax1.axhline(0, color='black', linewidth=1)
@@ -960,7 +951,7 @@ def plot_promotion_margins_analysis(
 
     bars2 = ax2.bar(labels_2, values_2, color=colors_2, alpha=0.85,
                     width=0.5)
-    ax2.set_title('2. Margin theo Loại Khuyến Mãi',
+    ax2.set_title('Margin theo Loại Khuyến Mãi',
                   fontsize=13, fontweight='bold')
     ax2.axhline(0, color='black', linewidth=1)
     _label_vbars(ax2, fmt_fn=lambda v: f'{v:.1f}%', offset=0.02)
@@ -986,7 +977,7 @@ def plot_promotion_margins_analysis(
 
     bars3 = ax3.bar(labels_3, values_3, color=colors_3, alpha=0.85,
                     width=0.6)
-    ax3.set_title('3. Ảnh hưởng của việc Cộng dồn (Stackable)',
+    ax3.set_title('Ảnh hưởng của việc Cộng dồn (Stackable)',
                   fontsize=13, fontweight='bold')
     ax3.axhline(0, color='black', linewidth=1)
     _label_vbars(ax3, fmt_fn=lambda v: f'{v:.1f}%', offset=0.02)
@@ -1276,43 +1267,34 @@ def plot_inventory_health_overview(
     def _clean_axis(ax: plt.Axes, title: str, xlabel: str, ylabel: str,
                    subtitle: Optional[str] = None) -> None:
         """Clean and format axes."""
-        ax.set_title(title, fontsize=13, fontweight='bold',
-                    loc='left', pad=15)
+        ax.set_title(title, fontsize=13, fontweight='bold', loc='left', pad=25) 
         if subtitle:
-            ax.text(0, 1.02, subtitle, transform=ax.transAxes,
-                   fontsize=10, color=MUTED)
+            ax.text(0, 1.06, subtitle, transform=ax.transAxes, 
+                   fontsize=10, color=MUTED, style='italic') 
+        
         ax.set_xlabel(xlabel, fontweight='bold')
         ax.set_ylabel(ylabel, fontweight='bold')
         format_spines(ax)
 
     # Create figure
-    fig = plt.figure(figsize=(18, 10), facecolor=BACKGROUND)
+    fig = plt.figure(figsize=(20, 10), facecolor=BACKGROUND)
     gs = gridspec.GridSpec(2, 15, figure=fig, height_ratios=[0.6, 2.4],
                            hspace=0.45, wspace=0.4)
 
-    fig.suptitle('Inventory Health Overview', fontsize=18,
-                fontweight='bold', color=TEXT, x=0.02, ha='left', y=0.99)
-    fig.text(
-        0.02, 0.935,
-        'Baseline signals show whether inventory issue is shortage, '
-        'excess, or misallocation.',
-        fontsize=11, color=MUTED
-    )
-
-    # KPI Cards
+    # KPI Cards (Đã Việt hóa)
     cards = [
-        ('Stockout rate', _fmt_percent(inv['stockout_flag'].mean()),
-         f"{_fmt_number(inv['stockout_days'].sum())} stockout days",
+        ('Tỷ lệ hết hàng', _fmt_percent(inv['stockout_flag'].mean()),
+         f"{_fmt_number(inv['stockout_days'].sum())} ngày hết hàng",
          PALETTE['stockout']),
-        ('Overstock rate', _fmt_percent(inv['overstock_flag'].mean()),
-         f"{_fmt_number(inv['overstock_flag'].sum())} overstock records",
+        ('Tỷ lệ tồn vượt mức', _fmt_percent(inv['overstock_flag'].mean()),
+         f"{_fmt_number(inv['overstock_flag'].sum())} bản ghi dư thừa",
          PALETTE['overstock']),
-        ('Avg fill rate', _fmt_percent(inv['fill_rate'].mean()),
-         'High avg, but local gaps remain', PALETTE['stable']),
-        ('Avg days supply', _fmt_number(inv['days_of_supply'].mean(), 1),
-         'Potential slow-moving inventory', PALETTE['warning']),
-        ('Reorder flag', _fmt_percent(inv['reorder_flag'].mean()),
-         'Not useful as current signal', PALETTE['neutral']),
+        ('Tỷ lệ đáp ứng TB', _fmt_percent(inv['fill_rate'].mean()),
+         'Mức TB cao, nhưng vẫn hụt cục bộ', PALETTE['stable']),
+        ('Ngày tồn kho TB', _fmt_number(inv['days_of_supply'].mean(), 1),
+         'Dấu hiệu hàng chậm luân chuyển', PALETTE['warning']),
+        ('Cờ tái đặt hàng', _fmt_percent(inv['reorder_flag'].mean()),
+         'Tín hiệu lỗi (không hoạt động)', PALETTE['neutral']),
     ]
 
     for idx, (title, value, subtitle, color) in enumerate(cards):
@@ -1326,48 +1308,46 @@ def plot_inventory_health_overview(
         fig.add_subplot(gs[1, 10:15]),
     ]
 
-    # Chart 1: Days of Supply
+    # Chart 1: Days of Supply (Phân phối Số ngày tồn kho)
     p99_days = inv['days_of_supply'].quantile(0.99)
     days_clipped = inv['days_of_supply'].clip(upper=p99_days)
     sns.histplot(days_clipped, bins=50, kde=True, ax=axes[0],
                 color=PALETTE['overstock'], alpha=0.75, edgecolor='white')
     axes[0].axvline(inv['days_of_supply'].median(), color=c_ink,
                    linestyle='--', linewidth=1.4,
-                   label=f"Median {_fmt_number(inv['days_of_supply'].median())}")
+                   label=f"Trung vị {_fmt_number(inv['days_of_supply'].median())}")
     axes[0].axvline(inv['days_of_supply'].mean(), color=c_volatile,
                    linestyle='-', linewidth=1.4,
-                   label=f"Mean {_fmt_number(inv['days_of_supply'].mean())}")
-    _clean_axis(axes[0], 'Days of Supply Distribution',
-               'Days of supply', 'Records',
-               subtitle=f'Clipped at P99 = {_fmt_number(p99_days)} '
-                        'to keep outliers readable')
+                   label=f"Trung bình {_fmt_number(inv['days_of_supply'].mean())}")
+    _clean_axis(axes[0], 'Phân phối Số ngày Tồn kho',
+               'Số ngày tồn kho (Days of supply)', 'Số lượng bản ghi',
+               )
     axes[0].legend(frameon=False, fontsize=9)
 
-    # Chart 2: Fill Rate
+    # Chart 2: Fill Rate (Phân phối Tỷ lệ đáp ứng)
     sns.histplot(inv['fill_rate'], bins=40, kde=True, ax=axes[1],
                 color=PALETTE['stockout'], alpha=0.78, edgecolor='white')
     axes[1].axvline(inv['fill_rate'].mean(), color=c_volatile,
                    linewidth=1.5,
-                   label=f"Mean {_fmt_percent(inv['fill_rate'].mean())}")
-    _clean_axis(axes[1], 'Fill Rate Distribution', 'Fill rate', 'Records',
-               subtitle='High average fill rate can hide SKU-level stockouts')
+                   label=f"Trung bình {_fmt_percent(inv['fill_rate'].mean())}")
+    _clean_axis(axes[1], 'Phân phối Tỷ lệ Đáp ứng đơn hàng', 'Tỷ lệ đáp ứng (Fill rate)', 'Số lượng bản ghi'
+               )
     axes[1].xaxis.set_major_formatter(ticker.PercentFormatter(1.0))
     axes[1].legend(frameon=False, fontsize=9)
 
-    # Chart 3: Stockout Records
+    # Chart 3: Stockout Records (Bản ghi đứt hàng)
     stockout_counts = inv['stockout_flag'].value_counts().sort_index()
     bar_colors = [PALETTE['stable'], PALETTE['stockout']]
-    axes[2].bar(['No stockout', 'Stockout'], stockout_counts.values,
+    axes[2].bar(['Đủ hàng (0)', 'Hết hàng (1)'], stockout_counts.values,
                color=bar_colors, edgecolor='white', linewidth=1.1)
-    _clean_axis(axes[2], 'Stockout Records', 'Stockout status', 'Records',
-               subtitle='Count of product-month records by stockout flag')
+    _clean_axis(axes[2], 'Số lượng Bản ghi Hết hàng', 'Trạng thái hết hàng', 'Số lượng bản ghi',
+               )
     _label_vbars(axes[2])
 
     if save_fig:
         fig.savefig(FIG_DIR / '10_inventory_health_overview.png',
                    dpi=150, bbox_inches='tight')
     plt.show()
-
 
 def plot_inventory_risk_concentration(
     inventory: pd.DataFrame, save_fig: bool = True
@@ -1525,10 +1505,9 @@ def plot_overstock_capital_locked(
 
     _clean_axis(
         ax,
-        'Inventory Value Locked in Overstock by Category',
+        'Dư hàng và Vốn bị khóa',
         'Vốn bị khóa (tính theo COGS)',
         'Danh mục (Category)',
-        subtitle='Locked capital highlights downside of blindly increasing stock.'
     )
 
     ax.xaxis.set_major_formatter(
@@ -1624,10 +1603,9 @@ def plot_stockout_recovery_scenarios(
 
     _clean_axis(
         ax,
-        'Naive Upside Estimate from Stockout Reduction',
-        'Assumed stockout reduction',
-        'Recovered revenue estimate',
-        subtitle='Simple linear estimate only; realistic scenario matrix next.'
+        'Tiềm năng Thu hồi Doanh thu ngây thơ',
+        'Giảm giả định Stockout',
+        'Doanh thu khôi phục ước tính',
     )
 
     ax.yaxis.set_major_formatter(
@@ -1683,7 +1661,7 @@ def plot_customer_behavior_dashboard(
     ax1 = fig.add_subplot(gs[0, 0])
     bars1 = ax1.barh(rfm_agg['segment'], rfm_agg['count'],
                     color=PALETTE['blue'], alpha=0.85)
-    ax1.set_title('(A) Phân bổ Khách hàng theo Phân khúc RFM',
+    ax1.set_title('Phân bổ Khách hàng theo Phân khúc RFM',
                  fontsize=14, fontweight='bold')
     ax1.set_xlabel('Số lượng khách hàng')
     _label_hbars(ax1, fmt_fn=lambda v: f"{int(v):,}")
@@ -1697,7 +1675,7 @@ def plot_customer_behavior_dashboard(
                          s=sizes, color=PALETTE['accent'], alpha=0.7,
                          edgecolor='white', linewidth=2)
 
-    ax2.set_title('(B) Chất lượng Phân khúc: Avg Recency vs Avg Profit',
+    ax2.set_title('Chất lượng Phân khúc: Avg Recency vs Avg Profit',
                  fontsize=14, fontweight='bold')
     ax2.set_xlabel('Thời gian từ lần mua cuối - Avg Recency (Ngày)')
     ax2.set_ylabel('Lợi nhuận gộp trung bình - Avg Profit (VNĐ)')
@@ -1725,7 +1703,7 @@ def plot_customer_behavior_dashboard(
            label='Khách hàng Mới (New)', color=PALETTE['primary'],
            alpha=0.85)
 
-    ax3.set_title('(C) Tỷ trọng Khách Cũ vs Khách Mới qua các năm',
+    ax3.set_title('Tỷ trọng Khách Cũ vs Khách Mới qua các năm',
                  fontsize=14, fontweight='bold')
     ax3.set_ylabel('Số lượng Khách hàng')
     ax3.legend(loc='upper left')
@@ -1743,9 +1721,9 @@ def plot_customer_behavior_dashboard(
         colors=[PALETTE['danger'], PALETTE['stable']],
         wedgeprops=dict(width=0.4, edgecolor='white', linewidth=3)
     )
-    plt.setp(autotexts, size=12, weight="bold", color="white")
+    plt.setp(autotexts, size=12, weight="bold", color=TEXT)
     plt.setp(texts, size=11, weight="bold", color=TEXT)
-    ax4.set_title(f'(D) Tỷ lệ Khách hàng Mua 1 lần',
+    ax4.set_title(f'Tỷ lệ Khách hàng Mua 1 lần',
                  fontsize=14, fontweight='bold')
 
     if save_fig:
@@ -1840,26 +1818,21 @@ def plot_customer_survival_analysis(
     customer_rfm: pd.DataFrame,
     save_fig: bool = True,
 ) -> None:
-    """Dashboard: Customer survival curves by RFM segment.
-    
-    Parameters:
-        master_df (pd.DataFrame): Master transaction dataframe
-        customer_rfm (pd.DataFrame): Customer RFM dataframe
-        save_fig (bool): Whether to save figure to disk
-    """
+    """Dashboard: Customer survival curves by RFM segment."""
     set_plot_style()
 
     BACKGROUND = 'white'
     TEXT = '#2B3A42'
     MUTED = '#7f8c8d'
 
+    # SỬA 1: Cập nhật dictionary màu sắc theo tên Tiếng Việt
     segment_colors = {
-        'Champions': PALETTE['primary'],
-        'Loyal Customers': PALETTE['blue'],
-        'New Customers': PALETTE['secondary'],
-        'At Risk': PALETTE['warning'],
-        'Need Attention': PALETTE['accent'],
-        'Lost': PALETTE['danger'],
+        'Khách VIP': PALETTE['primary'],
+        'Khách Thân Thiết': PALETTE['blue'],
+        'Khách Gần Đây': PALETTE['secondary'],
+        'Nguy Cơ Rời Bỏ': PALETTE['warning'],
+        'Cần Chăm Sóc': PALETTE['accent'],
+        'Đã Rời Bỏ': PALETTE['danger'],
     }
 
     # Calculate tenure
@@ -1904,13 +1877,14 @@ def plot_customer_survival_analysis(
         ax.step(seg_data['year'], seg_data['survival_rate'], where='post',
                lw=2.5, label=segment, color=color, alpha=0.85)
 
-        last_point = seg_data.iloc[-1]
-        ax.text(last_point['year'] + 0.1, last_point['survival_rate'],
-               segment, color=color, fontweight='bold', fontsize=10,
-               va='center')
+        # SỬA 2: Đã xóa phần ax.text bị lỗi đè chữ ở đây
+
+    # Thêm Legend thay cho ax.text
+    ax.legend(title="Phân khúc", fontsize=10, title_fontsize=11, 
+              loc='upper right', bbox_to_anchor=(1.0, 1.0))
 
     ax.set_title('SURVIVAL CURVES: Sau bao lâu thì khách hàng "bỏ cuộc"?',
-                fontsize=15, fontweight='bold', loc='left', pad=15)
+                 fontsize=15, fontweight='bold', loc='left', pad=15)
     ax.text(0, 1.02,
            'Đường cong biểu diễn xác suất khách hàng còn gắn bó '
            '(Survival Rate) sau N năm mua hàng đầu tiên.',
@@ -1919,7 +1893,8 @@ def plot_customer_survival_analysis(
     ax.set_xlabel('Số năm gắn bó (Tenure in years)', fontweight='bold')
     ax.set_ylabel('Xác suất còn ở lại (%)', fontweight='bold')
 
-    ax.set_xlim(0, 8)
+    # Chỉnh trục X dài ra một chút để thấy trọn vẹn 10 năm của Khách VIP
+    ax.set_xlim(0, 10.5) 
     ax.set_ylim(0, 105)
 
     format_spines(ax)
@@ -1929,7 +1904,6 @@ def plot_customer_survival_analysis(
         fig.savefig(FIG_DIR / '16_customer_survival_curves.png',
                    dpi=150, bbox_inches='tight')
     plt.show()
-
 
 def plot_customer_triage_map(
     customer_rfm: pd.DataFrame, save_fig: bool = True
@@ -1947,12 +1921,12 @@ def plot_customer_triage_map(
     MUTED = '#7f8c8d'
 
     segment_colors = {
-        'Champions': PALETTE['primary'],
-        'Loyal Customers': PALETTE['blue'],
-        'New Customers': PALETTE['secondary'],
-        'At Risk': PALETTE['warning'],
-        'Need Attention': PALETTE['accent'],
-        'Lost': PALETTE['danger'],
+        'Khách VIP': PALETTE['primary'],
+        'Khách Thân Thiết': PALETTE['blue'],
+        'Khách Gần Đây': PALETTE['secondary'],
+        'Nguy Cơ Rời Bỏ': PALETTE['warning'],
+        'Cần Chăm Sóc': PALETTE['accent'],
+        'Đã Rời Bỏ': PALETTE['danger'],
     }
 
     # Prepare data
@@ -2026,6 +2000,85 @@ def plot_customer_triage_map(
                    dpi=150, bbox_inches='tight')
     plt.show()
 
+
+def plot_segment_profitability(
+    customer_rfm: pd.DataFrame, save_fig: bool = True
+) -> None:
+    """Dashboard 1x2: Phân tích Khả năng Sinh lời theo Phân khúc Khách hàng."""
+    set_plot_style()
+
+    BACKGROUND = 'white'
+    TEXT = '#2B3A42'
+    MUTED = '#7f8c8d'
+
+    # Chuẩn bị dữ liệu
+    profit_agg = customer_rfm.groupby('segment').agg({
+        'monetary_profit': ['sum', 'mean', 'count']
+    }).reset_index()
+    profit_agg.columns = ['segment', 'total_profit', 'avg_profit', 'customer_count']
+    
+    # Tính % đóng góp tổng lợi nhuận
+    profit_agg = profit_agg.sort_values('total_profit', ascending=True)
+    total_profit_all = profit_agg['total_profit'].sum()
+    profit_agg['profit_share'] = profit_agg['total_profit'] / total_profit_all * 100
+
+    # Tạo bảng data sort theo avg_profit cho biểu đồ (B)
+    avg_agg = profit_agg.sort_values('avg_profit', ascending=True)
+
+    # Khởi tạo Figure
+    fig = plt.figure(figsize=(16, 6), facecolor=BACKGROUND)
+    gs = gridspec.GridSpec(1, 2, figure=fig, wspace=0.25)
+    fig.suptitle('Khả Năng Sinh Lời Theo Phân Khúc Khách Hàng (RFM)',
+                 fontsize=18, fontweight='bold', color=TEXT, y=1.05)
+
+    # (A) Biểu đồ Tổng Lợi Nhuận Gộp (Total Profit)
+    ax1 = fig.add_subplot(gs[0, 0])
+    
+    # Highlight nhóm Champions bằng màu chính, còn lại màu phụ
+    colors_1 = [PALETTE['primary'] if seg == 'Khách VIP' else PALETTE['blue'] 
+                for seg in profit_agg['segment']]
+    
+    ax1.barh(profit_agg['segment'], profit_agg['total_profit'] / 1e6, 
+             color=colors_1, alpha=0.85, edgecolor='white')
+    
+    ax1.set_title('(A) Tổng Lợi Nhuận Gộp Theo Nhóm', 
+                  fontsize=14, fontweight='bold', loc='left', pad=15)
+    ax1.set_xlabel('Tổng Lợi Nhuận Gộp (Triệu VNĐ)', fontweight='bold')
+    
+    # Chèn Text tỷ lệ % lên thanh Bar
+    for patch, (_, row) in zip(ax1.patches, profit_agg.iterrows()):
+        ax1.text(
+            patch.get_width() + (ax1.get_xlim()[1] * 0.02),
+            patch.get_y() + patch.get_height() / 2,
+            f"{_fmt_number(row['total_profit'] / 1e6, 1)} Tr ({row['profit_share']:.1f}%)",
+            va='center', ha='left', fontsize=10, fontweight='bold', color=TEXT
+        )
+    format_spines(ax1)
+
+    # (B) Biểu đồ Lợi Nhuận Trung Bình / Khách (Average Profit)
+    ax2 = fig.add_subplot(gs[0, 1])
+    
+    colors_2 = [PALETTE['accent'] if seg == 'Khách VIP' else PALETTE['secondary'] 
+                for seg in avg_agg['segment']]
+    
+    ax2.barh(avg_agg['segment'], avg_agg['avg_profit'], 
+             color=colors_2, alpha=0.85, edgecolor='white')
+    
+    ax2.set_title('(B) Lợi Nhuận Gộp Trung Bình / Khách Hàng', 
+                  fontsize=14, fontweight='bold', loc='left', pad=15)
+    ax2.set_xlabel('Lợi Nhuận Gộp Trung Bình (VNĐ)', fontweight='bold')
+    
+    ax2.xaxis.set_major_formatter(
+        ticker.FuncFormatter(lambda x, pos: f"{x:,.0f}")
+    )
+    _label_hbars(ax2, fmt_fn=lambda v: f"{v:,.0f} đ", offset=0.02)
+    format_spines(ax2)
+
+    plt.tight_layout()
+    if save_fig:
+        fig.savefig(FIG_DIR / '18_segment_profitability.png', 
+                    dpi=150, bbox_inches='tight')
+    plt.show()
 
 def section_header(title: str, subtitle: str = '') -> None:
     """Display a professional section header in the notebook.
