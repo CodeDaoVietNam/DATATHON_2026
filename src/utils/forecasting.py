@@ -37,7 +37,7 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import re
 
-from feature_engineering import add_time_features, add_vn_calendar
+from feature_engineering import SALE_EVENT_DAYS, TET_DATES, add_time_features, add_vn_calendar
 
 
 RANDOM_SEED = 42
@@ -173,6 +173,241 @@ def fix_revenue_cogs_swaps(sales: pd.DataFrame) -> pd.DataFrame:
     mask = fixed["COGS"] > fixed["Revenue"]
     fixed.loc[mask, ["Revenue", "COGS"]] = fixed.loc[mask, ["COGS", "Revenue"]].to_numpy()
     return fixed
+
+
+DEFAULT_EVENT_CALIBRATION_STRENGTHS = {
+    "tet": 0.30,
+    "pre_tet": 0.10,
+    "post_tet": 0.00,
+    "pre_sale_event": 0.25,
+    "sale_event_day": 0.05,
+    "post_sale_event": 0.00,
+    "q1_end_spike": 0.20,
+    "aug_end_spike": 0.20,
+    "back2school_extended": 0.10,
+}
+
+
+def _event_bucket_masks(dates: Sequence[pd.Timestamp | str]) -> Dict[str, pd.Series]:
+    """Return mutually interpretable known-future spike buckets."""
+    d = pd.Series(pd.to_datetime(list(dates)))
+    if d.empty:
+        keys = [
+            "tet",
+            "pre_tet",
+            "post_tet",
+            "pre_sale_event",
+            "sale_event_day",
+            "post_sale_event",
+            "q1_end_spike",
+            "aug_end_spike",
+            "back2school_extended",
+        ]
+        return {key: pd.Series(False, index=d.index) for key in keys}
+
+    masks: Dict[str, pd.Series] = {
+        "tet": pd.Series(False, index=d.index),
+        "pre_tet": pd.Series(False, index=d.index),
+        "post_tet": pd.Series(False, index=d.index),
+        "pre_sale_event": pd.Series(False, index=d.index),
+        "sale_event_day": pd.Series(False, index=d.index),
+        "post_sale_event": pd.Series(False, index=d.index),
+        "q1_end_spike": ((d.dt.month == 3) & (d.dt.day >= 25)),
+        "aug_end_spike": ((d.dt.month == 8) & (d.dt.day >= 25)),
+        "back2school_extended": (
+            ((d.dt.month == 8) & (d.dt.day >= 25))
+            | ((d.dt.month == 9) & (d.dt.day <= 10))
+        ),
+    }
+
+    for year in range(int(d.dt.year.min()) - 1, int(d.dt.year.max()) + 2):
+        for month, day in SALE_EVENT_DAYS:
+            event_date = pd.Timestamp(year=year, month=month, day=day)
+            masks["pre_sale_event"] |= (d >= event_date - pd.Timedelta(days=3)) & (d < event_date)
+            masks["sale_event_day"] |= d.eq(event_date)
+            masks["post_sale_event"] |= (d > event_date) & (d <= event_date + pd.Timedelta(days=2))
+
+    for tet_date in TET_DATES:
+        masks["pre_tet"] |= (d >= tet_date - pd.Timedelta(days=14)) & (d < tet_date)
+        masks["tet"] |= (d >= tet_date) & (d <= tet_date + pd.Timedelta(days=3))
+        masks["post_tet"] |= (d > tet_date + pd.Timedelta(days=3)) & (d <= tet_date + pd.Timedelta(days=7))
+
+    return masks
+
+
+def _event_window_flags(dates: Sequence[pd.Timestamp | str], include_tet: bool = True) -> pd.Series:
+    """Return known-future event windows where revenue spikes are expected."""
+    masks = _event_bucket_masks(dates)
+    include = ["pre_sale_event", "sale_event_day", "post_sale_event", "q1_end_spike", "aug_end_spike", "back2school_extended"]
+    if include_tet:
+        include += ["pre_tet", "tet", "post_tet"]
+    flags = pd.Series(False, index=pd.RangeIndex(len(pd.Series(pd.to_datetime(list(dates))))))
+    for key in include:
+        flags |= masks[key].reset_index(drop=True)
+    return flags
+
+
+def compute_event_sample_weights(
+    dates: Sequence[pd.Timestamp | str],
+    base_weight: float = 1.0,
+    sale_weight: float = 2.0,
+    sale_day_weight: float = 1.4,
+    tet_weight: float = 2.5,
+    q1_end_weight: float = 2.2,
+    aug_end_weight: float = 2.0,
+    back2school_weight: float = 1.5,
+) -> np.ndarray:
+    """Weight known peak windows higher for tree training."""
+    masks = _event_bucket_masks(dates)
+    weights = np.full(len(pd.Series(pd.to_datetime(list(dates)))), float(base_weight), dtype=float)
+
+    weight_map = {
+        "pre_sale_event": sale_weight,
+        "sale_event_day": sale_day_weight,
+        "tet": tet_weight,
+        "pre_tet": tet_weight,
+        "q1_end_spike": q1_end_weight,
+        "aug_end_spike": aug_end_weight,
+        "back2school_extended": back2school_weight,
+    }
+    for key, weight in weight_map.items():
+        flags = masks[key].to_numpy(dtype=bool)
+        weights[flags] = np.maximum(weights[flags], float(weight))
+
+    return weights
+
+
+def compute_recency_sample_weights(
+    dates: Sequence[pd.Timestamp | str],
+    early_weight: float = 0.65,
+    transition_weight: float = 0.90,
+    recent_weight: float = 1.25,
+) -> np.ndarray:
+    """Weight recent years higher without discarding older seasonality."""
+    d = pd.Series(pd.to_datetime(list(dates)))
+    weights = np.full(len(d), float(early_weight), dtype=float)
+    if d.empty:
+        return weights
+
+    years = d.dt.year.to_numpy()
+    weights[(years >= 2019) & (years <= 2020)] = float(transition_weight)
+    weights[years >= 2021] = float(recent_weight)
+    return weights
+
+
+def combine_sample_weights(*weights: Sequence[float]) -> np.ndarray:
+    """Multiply sample-weight vectors and normalize their mean to 1.0."""
+    clean = [np.asarray(w, dtype=float) for w in weights if w is not None]
+    if not clean:
+        return np.array([], dtype=float)
+
+    n = len(clean[0])
+    combined = np.ones(n, dtype=float)
+    for w in clean:
+        if len(w) != n:
+            raise ValueError("All sample-weight vectors must have the same length")
+        combined *= np.where(np.isfinite(w), w, 1.0)
+
+    mean_weight = float(np.nanmean(combined))
+    if np.isfinite(mean_weight) and mean_weight > 0:
+        combined = combined / mean_weight
+    return combined
+
+
+def _normalize_event_strengths(strength: float | Dict[str, float]) -> Dict[str, float]:
+    if isinstance(strength, dict):
+        merged = DEFAULT_EVENT_CALIBRATION_STRENGTHS.copy()
+        merged.update({k: float(v) for k, v in strength.items()})
+        return merged
+    scalar = float(strength)
+    return {k: scalar for k in DEFAULT_EVENT_CALIBRATION_STRENGTHS}
+
+
+def calibrate_event_spikes(
+    preds: np.ndarray,
+    dates: Sequence[pd.Timestamp | str],
+    historical_train: pd.DataFrame,
+    target_col: str = "Revenue",
+    strength: float | Dict[str, float] = DEFAULT_EVENT_CALIBRATION_STRENGTHS,
+    min_factor: float = 0.90,
+    max_factor: float = 1.45,
+) -> np.ndarray:
+    """
+    Apply a mild, future-safe event uplift learned from historical event windows.
+
+    The multiplier is estimated from known sale/Tet windows relative to same-month
+    non-event days, then blended into predictions only on known event windows.
+    """
+    strengths = _normalize_event_strengths(strength)
+    if max(strengths.values(), default=0.0) <= 0:
+        return np.asarray(preds, dtype=float)
+
+    pred = np.asarray(preds, dtype=float).copy()
+    out_dates = pd.Series(pd.to_datetime(list(dates)))
+    out_masks = _event_bucket_masks(out_dates)
+    if not any(mask.any() and strengths.get(bucket, 0.0) > 0 for bucket, mask in out_masks.items()):
+        return np.maximum(pred, 0.0)
+
+    hist = historical_train[["Date", target_col]].copy().reset_index(drop=True)
+    hist["Date"] = pd.to_datetime(hist["Date"])
+    hist["month"] = hist["Date"].dt.month
+    hist_masks = _event_bucket_masks(hist["Date"])
+    hist["is_any_event_window"] = False
+    for mask in hist_masks.values():
+        hist["is_any_event_window"] |= mask.to_numpy(dtype=bool)
+
+    global_non_event = hist.loc[~hist["is_any_event_window"], target_col].median()
+    if not np.isfinite(global_non_event) or global_non_event <= 0:
+        global_non_event = hist[target_col].median()
+
+    # Use one calibration bucket per day. This prevents overlapping windows
+    # such as Aug-end and back-to-school from multiplying the same prediction.
+    bucket_priority = [
+        "tet",
+        "pre_tet",
+        "sale_event_day",
+        "pre_sale_event",
+        "post_sale_event",
+        "post_tet",
+        "q1_end_spike",
+        "aug_end_spike",
+        "back2school_extended",
+    ]
+    calibrated = np.zeros(len(pred), dtype=bool)
+
+    for bucket in bucket_priority:
+        out_mask = out_masks[bucket]
+        bucket_strength = strengths.get(bucket, 0.0)
+        if bucket_strength <= 0 or not out_mask.any():
+            continue
+
+        hist_mask = hist_masks[bucket].to_numpy(dtype=bool)
+        hist_bucket = hist.loc[hist_mask].copy()
+        if len(hist_bucket) < 2:
+            continue
+
+        month_factors: Dict[int, float] = {}
+        for month, month_df in hist.groupby("month"):
+            month_bucket = hist_bucket[hist_bucket["month"] == month]
+            if len(month_bucket) < 1:
+                continue
+            non_bucket = month_df.loc[~pd.Series(hist_mask, index=hist.index).loc[month_df.index], target_col]
+            baseline = non_bucket.median() if len(non_bucket) else global_non_event
+            if not np.isfinite(baseline) or baseline <= 0:
+                baseline = global_non_event
+            factor = float(month_bucket[target_col].median() / max(baseline, 1e-8))
+            month_factors[int(month)] = float(np.clip(factor, min_factor, max_factor))
+
+        if not month_factors:
+            continue
+        months = out_dates.dt.month.to_numpy()
+        factors = np.array([month_factors.get(int(m), 1.0) for m in months], dtype=float)
+        blended_factors = 1.0 + float(bucket_strength) * (factors - 1.0)
+        flags = out_mask.to_numpy(dtype=bool) & ~calibrated
+        pred[flags] = pred[flags] * blended_factors[flags]
+        calibrated[flags] = True
+
+    return np.maximum(pred, 0.0)
 
 
 def build_promo_profile(
@@ -592,7 +827,11 @@ def build_business_daily_table(
         items = items.merge(orders_base[["order_id", "order_date"]], on="order_id", how="left")
         items["gross_item_value"] = items["quantity"] * items["unit_price"]
         items["discount_amount"] = items["discount_amount"].fillna(0.0)
-        items["has_promo"] = items[["promo_id", "promo_id_2"]].notna().any(axis=1).astype(float)
+        if "is_promo_applied" in items.columns:
+            items["has_promo"] = items["is_promo_applied"].fillna(0).astype(float)
+        else:
+            promo_cols = [c for c in ["promo_id", "promo_id_2"] if c in items.columns]
+            items["has_promo"] = items[promo_cols].notna().any(axis=1).astype(float) if promo_cols else 0.0
         item_daily = (
             items.groupby("order_date", as_index=False)
             .agg(
@@ -1606,6 +1845,64 @@ def blend_with_normalized_shape(
     normalized_shape = shape * (base_mean / shape_mean)
     blended = (1.0 - weight) * base + weight * normalized_shape
     return np.maximum(blended, 0.0)
+
+
+def apply_recovery_trend_calibration(
+    preds: Sequence[float],
+    dates: Sequence[pd.Timestamp | str],
+    historical_sales: pd.DataFrame,
+    strength: float,
+    cap_year1: float = 1.12,
+    cap_year2: float = 1.18,
+) -> np.ndarray:
+    """
+    Apply a mild annual recovery uplift learned from the latest yearly trend.
+
+    This is intentionally conservative: it only uses historical annual totals up
+    to the training cutoff and clips the first/second forecast-year uplifts.
+    """
+    pred = np.asarray(preds, dtype=float).copy()
+    strength = float(np.clip(strength, 0.0, 1.0))
+    if strength <= 0 or len(pred) == 0:
+        return np.maximum(pred, 0.0)
+
+    d = pd.Series(pd.to_datetime(list(dates)))
+    if d.empty or historical_sales.empty:
+        return np.maximum(pred, 0.0)
+
+    hist = historical_sales[["Date", "Revenue"]].copy()
+    hist["Date"] = pd.to_datetime(hist["Date"])
+    hist["year"] = hist["Date"].dt.year
+    yearly = hist.groupby("year")["Revenue"].sum().sort_index()
+    max_hist_year = int(hist["year"].max())
+
+    growth_candidates = []
+    if 2020 in yearly.index and 2021 in yearly.index and yearly.loc[2020] > 0:
+        growth_candidates.append((0.25, float(yearly.loc[2021] / yearly.loc[2020])))
+    if 2021 in yearly.index and 2022 in yearly.index and yearly.loc[2021] > 0:
+        growth_candidates.append((0.75, float(yearly.loc[2022] / yearly.loc[2021])))
+    if not growth_candidates:
+        recent = yearly.tail(3)
+        yoy = recent.pct_change().dropna()
+        if yoy.empty:
+            return np.maximum(pred, 0.0)
+        recovery_growth = float(1.0 + yoy.mean())
+    else:
+        total_weight = sum(w for w, _ in growth_candidates)
+        recovery_growth = sum(w * g for w, g in growth_candidates) / max(total_weight, 1e-8)
+
+    recovery_growth = max(1.0, recovery_growth)
+    years = d.dt.year.to_numpy()
+    factors = np.ones(len(pred), dtype=float)
+    for idx, year in enumerate(years):
+        horizon_year = int(year) - max_hist_year
+        if horizon_year <= 0:
+            continue
+        raw_factor = 1.0 + strength * ((recovery_growth ** horizon_year) - 1.0)
+        cap = cap_year1 if horizon_year == 1 else cap_year2
+        factors[idx] = float(np.clip(raw_factor, 1.0, cap))
+
+    return np.maximum(pred * factors, 0.0)
 
 
 def forecast_cogs_ratio_model(

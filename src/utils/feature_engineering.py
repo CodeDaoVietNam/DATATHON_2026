@@ -21,6 +21,7 @@ TET_DATES = pd.to_datetime([
     "2021-02-12", "2022-02-01", "2023-01-22", "2024-02-10",
 ])
 
+SALE_EVENT_DAYS = [(3, 3), (4, 4), (6, 6), (8, 8), (9, 9), (11, 11), (12, 12)]
 MIN_TRAIN_DATE = pd.Timestamp("2012-07-04")
 
 
@@ -42,6 +43,9 @@ def add_time_features(df: pd.DataFrame, date_col: str = "Date") -> pd.DataFrame:
     df["is_month_end"]  = dt.is_month_end.astype(int)
     df["is_month_start"]= dt.is_month_start.astype(int)
     df["is_quarter_end"]= dt.is_quarter_end.astype(int)
+    df["days_to_month_end"] = (dt.days_in_month - dt.day).astype(int)
+    df["is_month_end_window"] = (dt.day >= 26).astype(int)
+    df["is_quarter_end_window"] = (dt.month.isin([3, 6, 9, 12]) & (dt.day >= 25)).astype(int)
 
     # Elapsed days — long-term trend proxy (confirmed from STL analysis)
     df["elapsed_days"]  = (df[date_col] - MIN_TRAIN_DATE).dt.days
@@ -87,11 +91,39 @@ def add_vn_calendar(df: pd.DataFrame, date_col: str = "Date") -> pd.DataFrame:
     df["is_post_tet"]     = post_tet.astype(int)
     df["days_to_tet"]     = dates.apply(days_to_nearest_tet).clip(-30, 30)
 
-    # ── Super Sale events (from EDA: 3-5x spike) ─────────────────────────────
+    # ── Super Sale events (from EDA: recurring spike windows) ────────────────
     df["is_1111"]         = ((dates.dt.month == 11) & (dates.dt.day == 11)).astype(int)
     df["is_1212"]         = ((dates.dt.month == 12) & (dates.dt.day == 12)).astype(int)
     df["is_pre_1111"]     = ((dates.dt.month == 11) & (dates.dt.day.between(8, 10))).astype(int)
     df["is_pre_1212"]     = ((dates.dt.month == 12) & (dates.dt.day.between(9, 11))).astype(int)
+
+    event_mask = pd.Series(False, index=df.index)
+    pre_event_mask = pd.Series(False, index=df.index)
+    post_event_mask = pd.Series(False, index=df.index)
+    event_strength = pd.Series(0.0, index=df.index)
+    event_dates = []
+    for year in range(int(dates.dt.year.min()) - 1, int(dates.dt.year.max()) + 2):
+        for month, day in SALE_EVENT_DAYS:
+            event_dates.append(pd.Timestamp(year=year, month=month, day=day))
+            col = f"is_sale_{month:02d}{day:02d}"
+            df[col] = ((dates.dt.month == month) & (dates.dt.day == day)).astype(int)
+
+    for event_date in event_dates:
+        event_mask |= dates.eq(event_date)
+        pre_event_mask |= (dates >= event_date - pd.Timedelta(days=3)) & (dates < event_date)
+        post_event_mask |= (dates > event_date) & (dates <= event_date + pd.Timedelta(days=2))
+        distance = (dates - event_date).dt.days.abs()
+        event_strength = np.maximum(event_strength, np.clip(1.0 - distance / 4.0, 0.0, 1.0))
+
+    def days_to_nearest_sale(d):
+        diffs = [(pd.Timestamp(d) - e).days for e in event_dates]
+        return min(diffs, key=abs)
+
+    df["is_sale_event"] = event_mask.astype(int)
+    df["is_pre_sale_event"] = pre_event_mask.astype(int)
+    df["is_post_sale_event"] = post_event_mask.astype(int)
+    df["sale_event_strength"] = event_strength.astype(float)
+    df["days_to_sale_event"] = dates.apply(days_to_nearest_sale).clip(-30, 30)
 
     # Black Friday: last Friday of November
     df["is_black_friday"] = (
@@ -101,6 +133,12 @@ def add_vn_calendar(df: pd.DataFrame, date_col: str = "Date") -> pd.DataFrame:
     # ── Seasonal patterns ─────────────────────────────────────────────────────
     df["is_summer"]       = dates.dt.month.isin([5, 6, 7, 8]).astype(int)
     df["is_back2school"]  = ((dates.dt.month.isin([8, 9])) & (dates.dt.day < 15)).astype(int)
+    df["is_back2school_extended"] = (
+        ((dates.dt.month == 8) & (dates.dt.day >= 25))
+        | ((dates.dt.month == 9) & (dates.dt.day <= 10))
+    ).astype(int)
+    df["is_q1_end_spike"] = ((dates.dt.month == 3) & (dates.dt.day >= 25)).astype(int)
+    df["is_aug_end_spike"] = ((dates.dt.month == 8) & (dates.dt.day >= 25)).astype(int)
     df["is_womens_day"]   = ((dates.dt.month == 3) & (dates.dt.day == 8)).astype(int)
     df["is_valentines"]   = ((dates.dt.month == 2) & (dates.dt.day == 14)).astype(int)
     df["is_year_end"]     = ((dates.dt.month == 12) & (dates.dt.day >= 20)).astype(int)

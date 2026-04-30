@@ -466,6 +466,7 @@ def train_final_catboost(
     y: np.ndarray,
     best_iter: Optional[int] = None,
     params: dict = None,
+    sample_weight: Optional[np.ndarray] = None,
 ):
     """Train CatBoost trên toàn bộ training data nếu package khả dụng."""
     if CatBoostRegressor is None:
@@ -479,7 +480,7 @@ def train_final_catboost(
         params["iterations"] = int(best_iter)
 
     model = CatBoostRegressor(**params)
-    model.fit(X, y, verbose=False)
+    model.fit(X, y, sample_weight=sample_weight, verbose=False)
     return model
 
 
