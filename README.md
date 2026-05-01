@@ -66,7 +66,7 @@ Song song với forecasting, nhóm thực hiện phân tích EDA sâu để rút
 
 - Python **3.9+**
 - Jupyter Notebook / JupyterLab
-- RAM tối thiểu: **8 GB** (khuyến nghị 16 GB do kích thước dataset)
+- RAM tối thiểu: **8 GB**
 
 ### 4.2. Clone repository
 
@@ -209,14 +209,6 @@ DATATHON_2026/
 │   └── baseline.ipynb                  # Notebook baseline mẫu
 │
 ├── figures/                          # Hình ảnh & biểu đồ xuất ra
-│   ├── 01_macro_kpi_dashboard.png      # Dashboard KPI tổng quan
-│   ├── 02_hook_bottlenecks.png         # Phân tích điểm nghẽn
-│   ├── 03_timeseries_decomposition.png # Phân rã chuỗi thời gian
-│   ├── 04_stationarity_acf.png         # ACF/PACF & kiểm định dừng
-│   ├── 05_dd1_inventory.png            # Deep Dive: Tồn kho
-│   ├── 06_act2_curated_diagnostic.png  # Diagnostic tổng hợp
-│   ├── 06_dd2_marketing_rfm.png        # Deep Dive: Marketing & RFM
-│   └── 07_dd3_returns_reviews.png      # Deep Dive: Hoàn trả & Đánh giá
 │
 ├── report/                           # Báo cáo chính thức
 │   ├── main.tex                        # LaTeX source
@@ -265,23 +257,23 @@ Tỷ lệ giữ chân khách hàng (Retention Rate) duy trì ổn định **>60%
 
 ### Metric đánh giá
 
-| Metric | Ý nghĩa |
-|---|---|
-| **MAE** | Mean Absolute Error — Sai số tuyệt đối trung bình |
-| **RMSE** | Root Mean Squared Error — Phạt nặng outlier |
-| **R²** | Hệ số xác định — % phương sai được giải thích |
+| Metric   | Ý nghĩa                                           |
+| -------- | ------------------------------------------------- |
+| **MAE**  | Mean Absolute Error — Sai số tuyệt đối trung bình |
+| **RMSE** | Root Mean Squared Error — Phạt nặng outlier       |
+| **R²**   | Hệ số xác định — % phương sai được giải thích     |
 
-*Validation Set: Năm 2022 (365 ngày — holdout theo thời gian, không random split để tránh leakage)*
+_Validation Set: Năm 2022 (365 ngày — holdout theo thời gian, không random split để tránh leakage)_
 
 ---
 
 ### Kết quả Baseline Models (Validation 2022)
 
-| Model | MAE | RMSE | R² |
-|---|---|---|---|
-| **Seasonal Naive** | 795,286 | 1,095,124 | 0.571 |
-| **Monthly Median** | 1,321,645 | 1,643,697 | 0.033 |
-| **Seasonal Growth** | 665,230 | 892,233 | 0.715 |
+| Model               | MAE | RMSE | R²  |
+| ------------------- | --- | ---- | --- |
+| **Seasonal Naive**  | TBD | TBD  | TBD |
+| **Monthly Median**  | TBD | TBD  | TBD |
+| **Seasonal Growth** | TBD | TBD  | TBD |
 
 > Mọi model ML phức tạp phải vượt qua **Seasonal Growth Baseline (MAE: 665,230)** để chứng minh giá trị.
 
@@ -289,13 +281,13 @@ Tỷ lệ giữ chân khách hàng (Retention Rate) duy trì ổn định **>60%
 
 ### Kết quả ML Models (Validation 2022 — Revenue)
 
-| Model | MAE | RMSE | R² | Ghi chú |
-|---|---|---|---|---|
-| **LightGBM** | ~520,000 | ~710,000 | ~0.80 | Model chính, nhanh & hiệu quả |
-| **XGBoost** | ~535,000 | ~730,000 | ~0.79 | Model phụ, ensemble |
-| **CatBoost** | ~545,000 | ~740,000 | ~0.78 | Model bổ sung, xử lý tốt categorical |
-| **ElasticNet** | ~680,000 | ~910,000 | ~0.70 | Linear baseline |
-| **Ensemble (LGB+XGB+CAT)** | **~490,000** | **~670,000** | **~0.83** | Kết quả tốt nhất |
+| Model                              | MAE | RMSE | R²  | Ghi chú                              |
+| ---------------------------------- | --- | ---- | --- | ------------------------------------ |
+| **LightGBM**                       | TBD | TBD  | TBD | Model chính, nhanh & hiệu quả        |
+| **XGBoost**                        | TBD | TBD  | TBD | Model phụ, ensemble                  |
+| **CatBoost**                       | TBD | TBD  | TBD | Model bổ sung, xử lý tốt categorical |
+| **Prophet**                        | TBD | TBD  | TBD | Dự báo chuỗi thời gian bổ sung       |
+| **Ensemble (LGB+XGB+CAT+Prophet)** | TBD | TBD  | TBD | Kết quả tốt nhất                     |
 
 > **Scenario được chọn nộp bài:** `recovery100_spike_q1_aug_tet` — kết hợp Recovery Calibration 100% với spike uplift cho Tết, cuối quý 1 và tháng 8.
 
@@ -303,16 +295,16 @@ Tỷ lệ giữ chân khách hàng (Retention Rate) duy trì ổn định **>60%
 
 ### Các kỹ thuật nâng cao
 
-| Kỹ thuật | Mô tả |
-|---|---|
-| **Recursive Forecasting** | Dự báo từng ngày, dùng prediction ngày trước làm lag cho ngày sau |
-| **Seasonal Growth Baseline** | Baseline mùa vụ có điều chỉnh tăng trưởng, dùng làm anchor |
-| **Monthly Calibration** | Điều chỉnh prediction theo mean lịch sử từng tháng |
-| **Event Spike Calibration** | Uplift/Calibration cho Tết (35%), Pre-Sale Events (22%), Aug End (18%) |
-| **Recovery Trend Calibration** | Phục hồi trend sau COVID-19 (strength = 1.00) |
-| **Component Shape Forecasting** | Dự báo dựa trên shape pattern lịch sử, không phụ thuộc vào lag |
-| **COGS Ratio Model** | Dự báo COGS thông qua tỷ lệ COGS/Revenue theo tháng, không dự báo độc lập |
-| **SHAP Explainability** | Giải thích tầm quan trọng của từng feature trong model |
+| Kỹ thuật                        | Mô tả                                                                     |
+| ------------------------------- | ------------------------------------------------------------------------- |
+| **Recursive Forecasting**       | Dự báo từng ngày, dùng prediction ngày trước làm lag cho ngày sau         |
+| **Seasonal Growth Baseline**    | Baseline mùa vụ có điều chỉnh tăng trưởng, dùng làm anchor                |
+| **Monthly Calibration**         | Điều chỉnh prediction theo mean lịch sử từng tháng                        |
+| **Event Spike Calibration**     | Uplift/Calibration cho Tết (35%), Pre-Sale Events (22%), Aug End (18%)    |
+| **Recovery Trend Calibration**  | Phục hồi trend sau COVID-19 (strength = 1.00)                             |
+| **Component Shape Forecasting** | Dự báo dựa trên shape pattern lịch sử, không phụ thuộc vào lag            |
+| **COGS Ratio Model**            | Dự báo COGS thông qua tỷ lệ COGS/Revenue theo tháng, không dự báo độc lập |
+| **SHAP Explainability**         | Giải thích tầm quan trọng của từng feature trong model                    |
 
 ---
 
@@ -320,12 +312,12 @@ Tỷ lệ giữ chân khách hàng (Retention Rate) duy trì ổn định **>60%
 
 ### Data Cleaning
 
-| Vấn đề | Giải pháp |
-|---|---|
-| **COGS > Revenue (382 rows)** | Phát hiện và swap COGS/Revenue — dữ liệu bị nhập ngược |
-| **Promo ID bị null** | Treat as `"No_Promo"` — missingness là tín hiệu kinh doanh có chủ đích |
-| **Stacked Promo bị null** | Treat as `"No_Stacked_Promo"` — tránh high-cardinality near-empty feature |
-| **Applicable Category null** | Treat as `"Sitewide"` — 80% promotion là Sitewide |
+| Vấn đề                        | Giải pháp                                                                 |
+| ----------------------------- | ------------------------------------------------------------------------- |
+| **COGS > Revenue (382 rows)** | Phát hiện và swap COGS/Revenue — dữ liệu bị nhập ngược                    |
+| **Promo ID bị null**          | Treat as `"No_Promo"` — missingness là tín hiệu kinh doanh có chủ đích    |
+| **Stacked Promo bị null**     | Treat as `"No_Stacked_Promo"` — tránh high-cardinality near-empty feature |
+| **Applicable Category null**  | Treat as `"Sitewide"` — 80% promotion là Sitewide                         |
 
 ### Chống Data Leakage
 
@@ -335,29 +327,34 @@ Tỷ lệ giữ chân khách hàng (Retention Rate) duy trì ổn định **>60%
 
 ### Feature Engineering
 
-| Nhóm Feature | Chi tiết |
-|---|---|
-| **Lag Features** | Lag 7, 14, 21, 28, 56, 91, 182, 364 ngày của Revenue & COGS |
-| **Rolling Statistics** | Mean, Std của cửa sổ 7, 14, 28, 56, 91 ngày |
-| **Calendar Features** | Day of week, Day of month, Month, Quarter, Is Weekend, Is Holiday VN |
-| **Event Features** | Is Tet, Pre/Post Tet, Is Sale Event Day, Pre/Post Sale Event, Q1 End Spike, Aug End Spike |
-| **Promotion Profile** | Số lượng/cường độ khuyến mãi active theo ngày |
-| **Traffic Profile** | Lưu lượng web theo ngày & nguồn truy cập |
-| **Inventory Profile** | Fill rate, Stockout signal theo ngày |
-| **Business Seasonality** | Seasonal component shape từ STL decomposition |
+| Nhóm Feature             | Chi tiết                                                                                  |
+| ------------------------ | ----------------------------------------------------------------------------------------- |
+| **Lag Features**         | Lag 7, 14, 21, 28, 56, 91, 182, 364 ngày của Revenue & COGS                               |
+| **Rolling Statistics**   | Mean, Std của cửa sổ 7, 14, 28, 56, 91 ngày                                               |
+| **Calendar Features**    | Day of week, Day of month, Month, Quarter, Is Weekend, Is Holiday VN                      |
+| **Event Features**       | Is Tet, Pre/Post Tet, Is Sale Event Day, Pre/Post Sale Event, Q1 End Spike, Aug End Spike |
+| **Promotion Profile**    | Số lượng/cường độ khuyến mãi active theo ngày                                             |
+| **Traffic Profile**      | Lưu lượng web theo ngày & nguồn truy cập                                                  |
+| **Inventory Profile**    | Fill rate, Stockout signal theo ngày                                                      |
+| **Business Seasonality** | Seasonal component shape từ STL decomposition                                             |
 
 ### Hyperparameters chính
 
 ```python
-# LightGBM
+# LightGBM (LGBM_V2_PARAMS)
 LGBM_PARAMS = {
-    "n_estimators": 2000,
-    "learning_rate": 0.05,
-    "num_leaves": 63,
-    "subsample": 0.8,
-    "colsample_bytree": 0.8,
-    "reg_alpha": 0.1,
-    "reg_lambda": 0.1,
+    "objective": "regression",
+    "metric": "mae",
+    "n_estimators": 5000,
+    "learning_rate": 0.02,
+    "num_leaves": 127,
+    "max_depth": -1,
+    "min_child_samples": 15,
+    "feature_fraction": 0.80,
+    "bagging_fraction": 0.85,
+    "bagging_freq": 5,
+    "lambda_l1": 0.1,
+    "lambda_l2": 1.0,
 }
 
 # Recursive Forecast Settings
@@ -365,18 +362,22 @@ RECURSIVE_BASELINE_BLEND = 0.10   # 10% blend với seasonal baseline
 RECURSIVE_EWM_ALPHA      = 0.85   # Smoothing factor cho EWM
 
 # Event Spike Calibration Strengths
-EVENT_SPIKE = {
-    "tet": 0.35, "pre_tet": 0.12,
-    "pre_sale_event": 0.22,
-    "q1_end_spike": 0.10, "aug_end_spike": 0.18,
+EVENT_CALIBRATION_STRENGTHS = {
+    "tet": 0.30,
+    "pre_tet": 0.10,
+    "post_tet": 0.00,
+    "pre_sale_event": 0.25,
+    "sale_event_day": 0.05,
+    "post_sale_event": 0.00,
+    "q1_end_spike": 0.20,
+    "aug_end_spike": 0.20,
+    "back2school_extended": 0.10,
 }
 ```
 
 ### Giới hạn & Lưu ý
 
 - **Horizon 548 ngày** là rất dài cho recursive forecast — sai số có thể tích lũy theo thời gian.
-- **CatBoost** cần cài đặt thêm riêng (không có trong `requirements.txt` mặc định), nếu không có thì pipeline tự động fallback về 2-model ensemble (LGB + XGB).
-- Dataset rất lớn (~100MB+), cần đủ RAM khi load toàn bộ.
 
 ---
 
