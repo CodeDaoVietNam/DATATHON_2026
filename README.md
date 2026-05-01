@@ -195,6 +195,7 @@ DATATHON_2026/
 ├── dataset/                         # Dữ liệu đầu vào & output
 ├── figures/                          # Hình ảnh & biểu đồ xuất ra
 ├── report/                           # Báo cáo chính thức
+├──outputs/                           #Thư mực chia file submission.csv
 ├── baseline.ipynb                    # Notebook baseline tham khảo (root)
 ├── requirements.txt                  # Danh sách thư viện
 ├── .gitignore                        # File loại trừ khỏi Git
