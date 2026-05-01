@@ -271,9 +271,9 @@ _Validation Set: Năm 2022 (365 ngày — holdout theo thời gian, không rando
 
 | Model               | MAE | RMSE | R²  |
 | ------------------- | --- | ---- | --- |
-| **Seasonal Naive**  | TBD | TBD  | TBD |
-| **Monthly Median**  | TBD | TBD  | TBD |
-| **Seasonal Growth** | TBD | TBD  | TBD |
+| **Seasonal Naive**  | 795,286 | 1,095,124  | 0.571 |
+| **Monthly Median**  | 1,321,645 | 1,643,697  | 0.033 |
+| **Seasonal Growth** | 665,230 | 892,233  | 0.715 |
 
 > Mọi model ML phức tạp phải vượt qua **Seasonal Growth Baseline (MAE: 665,230)** để chứng minh giá trị.
 
@@ -281,15 +281,13 @@ _Validation Set: Năm 2022 (365 ngày — holdout theo thời gian, không rando
 
 ### Kết quả ML Models (Validation 2022 — Revenue)
 
-| Model                              | MAE | RMSE | R²  | Ghi chú                              |
-| ---------------------------------- | --- | ---- | --- | ------------------------------------ |
-| **LightGBM**                       | TBD | TBD  | TBD | Model chính, nhanh & hiệu quả        |
-| **XGBoost**                        | TBD | TBD  | TBD | Model phụ, ensemble                  |
-| **CatBoost**                       | TBD | TBD  | TBD | Model bổ sung, xử lý tốt categorical |
-| **Prophet**                        | TBD | TBD  | TBD | Dự báo chuỗi thời gian bổ sung       |
-| **Ensemble (LGB+XGB+CAT+Prophet)** | TBD | TBD  | TBD | Kết quả tốt nhất                     |
-
-> **Scenario được chọn nộp bài:** `recovery100_spike_q1_aug_tet` — kết hợp Recovery Calibration 100% với spike uplift cho Tết, cuối quý 1 và tháng 8.
+| Stage | MAE | RMSE | R2 | Interpretation |
+|---|---:|---:|---:|---|
+| Raw CAT | 679,000 | 964,290 | 0.667 | CatBoost là model tree ổn nhất, nhưng vẫn miss spike và bị regression-to-mean |
+| CAT + component shape | 639,280 | 904,902 | 0.707 | Component shape giúp forecast giữ cấu trúc seasonal/day-level tốt hơn |
+| + Seasonal Growth 0.30 | 598,325 | 838,716 | 0.748 | Seasonal growth bù phần long-horizon trend mà tree model học chưa đủ |
+| + ElasticNet 0.30 | 583,302 | 809,885 | 0.765 | ElasticNet tạo model diversity, giảm overfit của tree-based models |
+| + Recovery + Spike | 574,717 | 795,378 | 0.774 | Recovery và spike uplift xử lý các pattern business lặp lại trong test horizon |
 
 ---
 
