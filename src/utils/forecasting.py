@@ -158,6 +158,71 @@ def predict_cogs(
     return np.maximum(revenue_pred * ratios, 0)
 
 
+def predict_cogs_monthly_ratio_anchor(
+    revenue_pred: Sequence[float],
+    dates: Sequence[pd.Timestamp | str],
+    historical_train: pd.DataFrame,
+    recent_years: Optional[int] = None,
+    min_month_samples: int = 5,
+    ratio_clip: Tuple[float, float] = (0.0, 0.995),
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Convert Revenue forecasts to COGS using monthly COGS/Revenue ratio anchors.
+
+    When recent_years is set, each month first tries to use ratios from the
+    latest N years, then falls back to the all-history monthly median. This is
+    useful when COGS margin drifts over time but monthly seasonality is still
+    important.
+    """
+    revenue = np.asarray(revenue_pred, dtype=float)
+    d = pd.Series(pd.to_datetime(list(dates)))
+    if historical_train.empty or len(revenue) == 0:
+        fallback = np.full(len(revenue), 0.85, dtype=float)
+        return np.maximum(revenue * fallback, 0.0), fallback
+
+    hist = historical_train[["Date", "Revenue", "COGS"]].copy()
+    hist["Date"] = pd.to_datetime(hist["Date"])
+    hist["year"] = hist["Date"].dt.year
+    hist["month"] = hist["Date"].dt.month
+    hist["cogs_ratio"] = (
+        hist["COGS"] / hist["Revenue"].replace(0, np.nan)
+    ).replace([np.inf, -np.inf], np.nan)
+    hist = hist.dropna(subset=["cogs_ratio"]).copy()
+    hist["cogs_ratio"] = hist["cogs_ratio"].clip(lower=ratio_clip[0], upper=ratio_clip[1])
+    if hist.empty:
+        fallback = np.full(len(revenue), 0.85, dtype=float)
+        return np.maximum(revenue * fallback, 0.0), fallback
+
+    all_monthly = hist.groupby("month")["cogs_ratio"].median()
+    global_ratio = float(hist["cogs_ratio"].median())
+
+    recent_monthly = pd.Series(dtype=float)
+    recent_global = global_ratio
+    if recent_years is not None and recent_years > 0:
+        max_year = int(hist["year"].max())
+        recent = hist[hist["year"] >= max_year - int(recent_years) + 1].copy()
+        if not recent.empty:
+            counts = recent.groupby("month")["cogs_ratio"].size()
+            recent_monthly_raw = recent.groupby("month")["cogs_ratio"].median()
+            recent_monthly = recent_monthly_raw[counts >= int(min_month_samples)]
+            recent_global = float(recent["cogs_ratio"].median())
+
+    ratios = []
+    for month in d.dt.month.to_numpy():
+        month = int(month)
+        if recent_years is not None and month in recent_monthly.index:
+            ratio = float(recent_monthly.loc[month])
+        elif month in all_monthly.index:
+            ratio = float(all_monthly.loc[month])
+        else:
+            ratio = recent_global if recent_years is not None else global_ratio
+        ratios.append(float(np.clip(ratio, ratio_clip[0], ratio_clip[1])))
+
+    ratio_arr = np.asarray(ratios, dtype=float)
+    cogs = np.minimum(np.maximum(revenue * ratio_arr, 0.0), np.maximum(revenue, 0.0) * ratio_clip[1])
+    return cogs, ratio_arr
+
+
 @dataclass
 class ForecastArtifacts:
     feature_cols: List[str]
@@ -1901,6 +1966,116 @@ def apply_recovery_trend_calibration(
         raw_factor = 1.0 + strength * ((recovery_growth ** horizon_year) - 1.0)
         cap = cap_year1 if horizon_year == 1 else cap_year2
         factors[idx] = float(np.clip(raw_factor, 1.0, cap))
+
+    return np.maximum(pred * factors, 0.0)
+
+
+SPIKE_WINDOW_FLAG_MAP = {
+    "tet": "is_tet",
+    "pre_sale_event": "is_pre_sale_event",
+    "aug_end_spike": "is_aug_end_spike",
+    "q1_end_spike": "is_q1_end_spike",
+}
+
+
+def _spike_window_feature_frame(dates: Sequence[pd.Timestamp | str]) -> pd.DataFrame:
+    """Build the calendar feature frame used by spike-window post-processing."""
+    out = pd.DataFrame({"Date": pd.to_datetime(list(dates))})
+    out = add_time_features(out, "Date")
+    out = add_vn_calendar(out, "Date")
+    return out
+
+
+def estimate_spike_window_multipliers(
+    historical_sales: pd.DataFrame,
+    strengths: Dict[str, float],
+    clip: Tuple[float, float] = (1.0, 1.45),
+) -> Dict[str, float]:
+    """
+    Estimate spike-window revenue multipliers from historical data only.
+
+    Each bucket is compared with non-bucket days in the same months. The result
+    is clipped because this helper is intended as conservative post-processing,
+    not as a hard public-leaderboard fit.
+    """
+    buckets = [bucket for bucket in strengths if bucket in SPIKE_WINDOW_FLAG_MAP]
+    if not buckets:
+        return {}
+    if historical_sales.empty or "Date" not in historical_sales or "Revenue" not in historical_sales:
+        return {bucket: 1.0 for bucket in buckets}
+
+    hist = historical_sales[["Date", "Revenue"]].copy()
+    hist["Date"] = pd.to_datetime(hist["Date"])
+    hist["Revenue"] = pd.to_numeric(hist["Revenue"], errors="coerce")
+    hist = hist.dropna(subset=["Date", "Revenue"]).copy()
+    if hist.empty:
+        return {bucket: 1.0 for bucket in buckets}
+
+    flags = _spike_window_feature_frame(hist["Date"])
+    hist = pd.concat(
+        [hist.reset_index(drop=True), flags.drop(columns=["Date"]).reset_index(drop=True)],
+        axis=1,
+    )
+
+    low, high = clip
+    multipliers: Dict[str, float] = {}
+    for bucket in buckets:
+        flag = SPIKE_WINDOW_FLAG_MAP[bucket]
+        if flag not in hist:
+            multipliers[bucket] = 1.0
+            continue
+
+        mask = hist[flag].astype(bool)
+        if int(mask.sum()) < 3:
+            multipliers[bucket] = 1.0
+            continue
+
+        months = hist.loc[mask, "month"].dropna().unique()
+        normal = hist[(~mask) & hist["month"].isin(months)]
+        if normal.empty:
+            normal = hist[~mask]
+        if normal.empty:
+            multipliers[bucket] = 1.0
+            continue
+
+        bucket_median = float(hist.loc[mask, "Revenue"].median())
+        normal_median = float(normal["Revenue"].median())
+        if not np.isfinite(bucket_median) or not np.isfinite(normal_median) or normal_median <= 0:
+            multipliers[bucket] = 1.0
+            continue
+
+        multipliers[bucket] = float(np.clip(bucket_median / normal_median, low, high))
+    return multipliers
+
+
+def apply_spike_window_uplift(
+    preds: Sequence[float],
+    dates: Sequence[pd.Timestamp | str],
+    historical_sales: pd.DataFrame,
+    strengths: Dict[str, float],
+    clip: Tuple[float, float] = (1.0, 1.45),
+) -> np.ndarray:
+    """Apply bucket-specific spike uplifts using historical multipliers."""
+    pred = np.asarray(preds, dtype=float).copy()
+    if len(pred) == 0 or not strengths:
+        return np.maximum(pred, 0.0)
+
+    flags = _spike_window_feature_frame(dates)
+    if len(flags) != len(pred):
+        raise ValueError("dates and preds must have the same length")
+
+    multipliers = estimate_spike_window_multipliers(historical_sales, strengths, clip=clip)
+    factors = np.ones(len(pred), dtype=float)
+    for bucket, strength in strengths.items():
+        strength = float(strength)
+        if strength <= 0 or bucket not in SPIKE_WINDOW_FLAG_MAP:
+            continue
+        flag = SPIKE_WINDOW_FLAG_MAP[bucket]
+        if flag not in flags:
+            continue
+        target_multiplier = multipliers.get(bucket, 1.0)
+        bucket_factor = 1.0 + strength * (target_multiplier - 1.0)
+        factors[flags[flag].to_numpy(dtype=bool)] *= bucket_factor
 
     return np.maximum(pred * factors, 0.0)
 
