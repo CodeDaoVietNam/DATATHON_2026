@@ -1,4 +1,4 @@
-# 🏆 DATATHON 2026 — Vietnam Fashion E-Commerce Intelligence
+# DATATHON 2026 — Vietnam Fashion E-Commerce Intelligence
 
 > **Đội:** 404 Brain Not Found &nbsp;|&nbsp; **Cuộc thi:** Datathon 2026
 
@@ -193,28 +193,8 @@ DATATHON_2026/
 │       └── cogs_ratio_experiments.py   # Thử nghiệm mô hình dự báo COGS ratio
 │
 ├── dataset/                         # Dữ liệu đầu vào & output
-│   ├── sales.csv                       # Target: Revenue & COGS lịch sử
-│   ├── sample_submission.csv           # Template file nộp bài
-│   ├── orders.csv                      # Dữ liệu đơn hàng
-│   ├── order_items.csv                 # Chi tiết từng mặt hàng trong đơn
-│   ├── products.csv                    # Danh mục sản phẩm
-│   ├── customers.csv                   # Thông tin khách hàng
-│   ├── promotions.csv                  # Chiến dịch khuyến mãi
-│   ├── inventory.csv                   # Tồn kho theo ngày
-│   ├── web_traffic.csv                 # Lưu lượng truy cập web
-│   ├── reviews.csv                     # Đánh giá của khách hàng
-│   ├── returns.csv                     # Dữ liệu hoàn trả
-│   ├── shipments.csv                   # Vận chuyển & giao hàng
-│   ├── geography.csv                   # Dữ liệu địa lý
-│   └── baseline.ipynb                  # Notebook baseline mẫu
-│
 ├── figures/                          # Hình ảnh & biểu đồ xuất ra
-│
 ├── report/                           # Báo cáo chính thức
-│   ├── main.tex                        # LaTeX source
-│   ├── main.pdf                        # Báo cáo PDF xuất bản
-│   └── references.bib                  # Tài liệu tham khảo
-│
 ├── baseline.ipynb                    # Notebook baseline tham khảo (root)
 ├── requirements.txt                  # Danh sách thư viện
 ├── .gitignore                        # File loại trừ khỏi Git
