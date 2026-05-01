@@ -7,7 +7,7 @@ docs/*
 !docs/FORECASTING_PIPELINE.md
 !docs/REPO_HANDOFF.md
 
-dataset/
+
 # Ignore everything in figures directory
 figures/**/*
 figure/**/*
