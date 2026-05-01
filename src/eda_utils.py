@@ -9,6 +9,10 @@ import matplotlib.gridspec as gridspec
 import seaborn as sns
 from IPython.display import display, HTML
 from scipy.stats import pearsonr
+import plotly.express as px
+import plotly.graph_objects as go
+from sklearn.tree import DecisionTreeClassifier, plot_tree
+
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / 'dataset'
@@ -2268,7 +2272,7 @@ def plot_cross_table_diagnostics(
         'Low Overstock Risk': PALETTE['warning'],
         'High Overstock Risk': PALETTE['overstock']
     }
-    colors_3 = returns_plot['inventory_group'].map(group_colors).fillna(PALETTE['neutral'])
+    colors_3 = returns_plot['inventory_group'].astype(str).map(group_colors).fillna(PALETTE['neutral'])
     
     axes[2].barh(returns_plot['inventory_group'], returns_plot['avg_return_rate'], 
                  color=colors_3, edgecolor='white')
@@ -2316,3 +2320,723 @@ def section_header(title: str, subtitle: str = '') -> None:
     </div>
     """
     display(HTML(html))
+
+
+def plot_returns_deep_dive(dfs: Dict[str, pd.DataFrame]) -> None:
+    # Prepare data
+    orders = dfs['orders']
+    order_items = dfs['order_items']
+    products = dfs['products']
+    returns = dfs['returns']
+    shipments = dfs['shipments']
+    reviews = dfs['reviews']
+
+    # 1. Return Rate by Size
+    # Merge order items with products
+    items_prod = order_items.merge(products, on='product_id', how='left')
+    ordered_by_size = items_prod.groupby('size')['quantity'].sum().reset_index(name='ordered_qty')
+    
+    # Merge returns to get return qty by size
+    returns_merged = returns.merge(products, on='product_id', how='left')
+    returned_by_size = returns_merged.groupby('size')['return_quantity'].sum().reset_index(name='returned_qty')
+    
+    size_analysis = ordered_by_size.merge(returned_by_size, on='size', how='left').fillna(0)
+    size_analysis['return_rate'] = (size_analysis['returned_qty'] / size_analysis['ordered_qty']) * 100
+    
+    # Order the sizes properly
+    size_order = ['S', 'M', 'L', 'XL']
+    available_sizes = [s for s in size_order if s in size_analysis['size'].values]
+    if len(available_sizes) < len(size_analysis):
+        available_sizes.extend([s for s in size_analysis['size'].unique() if s not in available_sizes])
+    size_analysis['size'] = pd.Categorical(size_analysis['size'], categories=available_sizes, ordered=True)
+    size_analysis = size_analysis.sort_values('size')
+
+    fig_size = px.bar(
+        size_analysis, 
+        x='size', 
+        y='return_rate', 
+        text='return_rate',
+        title='1. Return Rate by Size (S/M/L/XL)',
+        labels={'size': 'Kích cỡ (Size)', 'return_rate': 'Tỷ lệ hoàn hàng (%)'},
+        color='return_rate',
+        color_continuous_scale='Reds'
+    )
+    fig_size.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
+    fig_size.update_layout(height=400, template='plotly_white')
+    fig_size.show()
+
+    # 2. Return rate theo category x size heatmap
+    ordered_cat_size = items_prod.groupby(['category', 'size'])['quantity'].sum().reset_index(name='ordered_qty')
+    returned_cat_size = returns_merged.groupby(['category', 'size'])['return_quantity'].sum().reset_index(name='returned_qty')
+    
+    cat_size_analysis = ordered_cat_size.merge(returned_cat_size, on=['category', 'size'], how='left').fillna(0)
+    cat_size_analysis['return_rate'] = (cat_size_analysis['returned_qty'] / cat_size_analysis['ordered_qty']) * 100
+    
+    heatmap_data = cat_size_analysis.pivot(index='category', columns='size', values='return_rate')
+    heatmap_data = heatmap_data.reindex(columns=[s for s in available_sizes if s in heatmap_data.columns])
+    
+    fig_heatmap = px.imshow(
+        heatmap_data,
+        text_auto='.1f',
+        aspect="auto",
+        color_continuous_scale='Reds',
+        title='2. Return Rate Category × Size Heatmap',
+        labels=dict(x="Kích cỡ", y="Danh mục", color="Tỷ lệ hoàn (%)")
+    )
+    fig_heatmap.update_layout(height=500, template='plotly_white')
+    fig_heatmap.show()
+
+    # 3. Decision tree: predict return = 'defective'
+    returns_dt = returns.merge(products, on='product_id', how='left')
+    returns_dt['is_defective'] = (returns_dt['return_reason'].str.lower() == 'defective').astype(int)
+    
+    features = ['category', 'segment', 'price', 'return_quantity']
+    dt_data = returns_dt[features + ['is_defective']].dropna()
+    
+    if dt_data['is_defective'].sum() > 0 and dt_data['is_defective'].nunique() > 1:
+        X = pd.get_dummies(dt_data[features], drop_first=True)
+        y = dt_data['is_defective']
+        
+        clf = DecisionTreeClassifier(max_depth=3, min_samples_leaf=50, random_state=42)
+        clf.fit(X, y)
+        
+        fig, ax = plt.subplots(figsize=(16, 8))
+        plot_tree(clf, feature_names=X.columns, class_names=['Not Defective', 'Defective'], filled=True, ax=ax, fontsize=10, proportion=True, rounded=True)
+        plt.title("3. Decision Tree: Các yếu tố dự đoán hoàn hàng do 'Defective'", fontsize=16)
+        plt.tight_layout()
+        plt.show()
+    else:
+        print("Không có đủ dữ liệu để huấn luyện Decision Tree cho lỗi 'Defective'.")
+
+    # 4. Lead time -> rating correlation
+    orders_shipments = orders.merge(shipments, on='order_id', how='inner')
+    orders_shipments['order_date'] = pd.to_datetime(orders_shipments['order_date'])
+    orders_shipments['delivery_date'] = pd.to_datetime(orders_shipments['delivery_date'])
+    orders_shipments['lead_time_days'] = (orders_shipments['delivery_date'] - orders_shipments['order_date']).dt.days
+    
+    corr_data = orders_shipments.merge(reviews, on='order_id', how='inner').dropna(subset=['lead_time_days', 'rating'])
+    
+    if len(corr_data) > 1:
+        r, p_value = pearsonr(corr_data['lead_time_days'], corr_data['rating'])
+        
+        display(HTML(f"""
+        <div style='background-color:#f8f9fa; padding:15px; border-left: 5px solid #3498db; margin-top:20px'>
+            <h4 style='margin-top:0'>4. Phân tích Tương quan: Lead Time và Rating</h4>
+            <p><strong>Hệ số tương quan Pearson (r):</strong> {r:.4f}</p>
+            <p><strong>P-value:</strong> {p_value:.4e}</p>
+            <p><em>Kết luận:</em> {'Có sự tương quan có ý nghĩa thống kê' if p_value < 0.05 else 'Không có sự tương quan có ý nghĩa thống kê'} giữa thời gian giao hàng và đánh giá của khách hàng (p-value {'<' if p_value < 0.05 else '>='} 0.05). Hướng tương quan là {'nghịch (thời gian giao càng lâu, rating càng giảm)' if r < 0 else 'thuận'}.</p>
+        </div>
+        """))
+        
+        plot_df = corr_data.sample(min(5000, len(corr_data)), random_state=42) if len(corr_data) > 5000 else corr_data
+        fig_corr = px.box(
+            plot_df,
+            x='lead_time_days',
+            y='rating',
+            points=False,
+            title='Distribution of Ratings by Lead Time (Days)',
+            labels={'lead_time_days': 'Thời gian giao hàng (Ngày)', 'rating': 'Đánh giá (Sao)'}
+        )
+        fig_corr.update_layout(height=500, template='plotly_white')
+        fig_corr.show()
+
+
+def plot_promotion_deep_dive(dfs: Dict[str, pd.DataFrame]) -> None:
+    orders = dfs['orders']
+    order_items = dfs['order_items']
+    products = dfs['products']
+    promotions = dfs['promotions']
+    
+    # Pre-process
+    items_merged = order_items.merge(products[['product_id', 'cogs']], on='product_id', how='left')
+    items_merged['gross_revenue'] = items_merged['unit_price'] * items_merged['quantity']
+    items_merged['net_revenue'] = items_merged['gross_revenue'] - items_merged['discount_amount'].fillna(0)
+    items_merged['gross_profit'] = items_merged['net_revenue'] - items_merged['cogs'] * items_merged['quantity']
+    
+    # 1. Stackable vs Single Promo Performance
+    items_merged['promo_count'] = items_merged[['promo_id', 'promo_id_2']].notna().sum(axis=1)
+    
+    stack_perf = items_merged.groupby('promo_count').agg(
+        total_revenue=('net_revenue', 'sum'),
+        total_profit=('gross_profit', 'sum')
+    ).reset_index()
+    
+    stack_perf['margin_pct'] = (stack_perf['total_profit'] / stack_perf['total_revenue']) * 100
+    stack_perf['promo_type'] = stack_perf['promo_count'].map({0: 'No Promo', 1: 'Single Promo', 2: 'Stackable Promo'})
+    
+    set_plot_style()
+    fig, ax = plt.subplots(figsize=(10, 5))
+    sns.barplot(data=stack_perf, x='promo_type', y='margin_pct', ax=ax, palette=[PALETTE['neutral'], PALETTE['primary'], PALETTE['danger']])
+    ax.set_title('1. Margin %: Stackable vs Single Promo vs No Promo')
+    ax.set_xlabel('Loại Khuyến mãi')
+    ax.set_ylabel('Biên lợi nhuận gộp (%)')
+    _label_vbars(ax, fmt_fn=lambda v: f"{v:.1f}%")
+    format_spines(ax)
+    plt.tight_layout()
+    plt.show()
+    
+    # 2. Promotion Channel ROI & Revenue
+    items_promo = items_merged.merge(promotions[['promo_id', 'promo_name', 'promo_channel']], on='promo_id', how='inner')
+    channel_perf = items_promo.groupby('promo_channel').agg(
+        revenue=('net_revenue', 'sum'),
+        discount_cost=('discount_amount', 'sum'),
+        profit=('gross_profit', 'sum')
+    ).reset_index()
+    
+    channel_perf['roi'] = (channel_perf['profit'] / channel_perf['discount_cost']).replace(np.inf, 0)
+    channel_perf = channel_perf.sort_values('revenue', ascending=False)
+    
+    fig, ax1 = plt.subplots(figsize=(12, 6))
+    ax2 = ax1.twinx()
+    
+    sns.barplot(data=channel_perf, x='promo_channel', y='revenue', ax=ax1, color=PALETTE['blue'], alpha=0.8)
+    sns.lineplot(data=channel_perf, x='promo_channel', y='roi', ax=ax2, color=PALETTE['accent'], marker='o', linewidth=3, markersize=10)
+    
+    ax1.set_title('2. Hiệu quả theo Channel: Revenue & ROI')
+    ax1.set_xlabel('Channel')
+    ax1.set_ylabel('Net Revenue (VND)', color=PALETTE['blue'])
+    ax2.set_ylabel('ROI Ratio', color=PALETTE['accent'])
+    ax1.tick_params(axis='y', labelcolor=PALETTE['blue'])
+    ax2.tick_params(axis='y', labelcolor=PALETTE['accent'])
+    format_spines(ax1, right_border=True)
+    plt.tight_layout()
+    plt.show()
+    
+    # 3. Post-promotion Dip (Event Study Approach)
+    daily_rev = items_merged.merge(orders[['order_id', 'order_date']], on='order_id', how='left')
+    daily_rev['order_date'] = pd.to_datetime(daily_rev['order_date']).dt.date
+    daily_rev_agg = daily_rev.groupby('order_date')['net_revenue'].sum().reset_index()
+    daily_rev_agg['order_date'] = pd.to_datetime(daily_rev_agg['order_date'])
+    daily_rev_agg = daily_rev_agg.sort_values('order_date')
+    
+    promotions['start_date'] = pd.to_datetime(promotions['start_date'])
+    promotions['end_date'] = pd.to_datetime(promotions['end_date'])
+    
+    fig, ax = plt.subplots(figsize=(15, 6))
+    ax.plot(daily_rev_agg['order_date'], daily_rev_agg['net_revenue'], color=PALETTE['primary'], linewidth=2)
+    ax.set_title('3. Daily Revenue Trend & Post-Promotion Dip')
+    ax.set_ylabel('Net Revenue (VND)')
+    ax.set_xlabel('Date')
+    
+    top_promos = promotions.head(3)
+    colors = [PALETTE['primary'], PALETTE['secondary'], PALETTE['warning']]
+    
+    for i, row in top_promos.iterrows():
+        start = row['start_date']
+        end = row['end_date']
+        if pd.notna(start) and pd.notna(end):
+            ax.axvspan(start, end, color=colors[i % len(colors)], alpha=0.2, label=row['promo_name'])
+            dip_end = end + pd.Timedelta(days=7)
+            ax.axvspan(end, dip_end, color=PALETTE['danger'], alpha=0.1, label='Post-promo 7d' if i == 0 else "")
+            
+    handles, labels = ax.get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    ax.legend(by_label.values(), by_label.keys(), loc='upper right')
+    format_spines(ax)
+    plt.tight_layout()
+    plt.show()
+
+    # Calculate exact numbers for the markdown insight
+    promo_dates = set()
+    for _, row in promotions.iterrows():
+        if pd.notna(row['start_date']) and pd.notna(row['end_date']):
+            promo_dates.update(pd.date_range(start=row['start_date'], end=row['end_date']).date)
+            
+    post_promo_dates = set()
+    for _, row in promotions.iterrows():
+        if pd.notna(row['end_date']):
+            post_promo_dates.update(pd.date_range(start=row['end_date'] + pd.Timedelta(days=1), periods=7).date)
+            
+    post_promo_dates = post_promo_dates - promo_dates
+    normal_dates = set(daily_rev_agg['order_date'].dt.date) - promo_dates - post_promo_dates
+    
+    def safe_mean(dates):
+        subset = daily_rev_agg[daily_rev_agg['order_date'].dt.date.isin(dates)]
+        return subset['net_revenue'].mean() if not subset.empty else 0
+
+    mean_normal = safe_mean(normal_dates)
+    mean_promo = safe_mean(promo_dates)
+    mean_post = safe_mean(post_promo_dates)
+    
+    if mean_normal > 0:
+        lift = (mean_promo / mean_normal - 1) * 100
+        dip = (mean_post / mean_normal - 1) * 100
+    else:
+        lift = dip = 0
+
+    display(HTML(f"""
+    <div style='background-color:#f8f9fa; padding:15px; border-left: 5px solid {PALETTE['accent']}; margin-top:20px'>
+        <h4 style='margin-top:0'>Phân tích Lượng Doanh Thu (Revenue Lift vs Dip)</h4>
+        <ul>
+            <li><strong>Trung bình ngày thường (Baseline):</strong> {_fmt_currency(mean_normal)}</li>
+            <li><strong>Trung bình ngày Khuyến mãi:</strong> {_fmt_currency(mean_promo)} (Lift: <strong>+{lift:.1f}%</strong>)</li>
+            <li><strong>Trung bình 7 ngày Hậu Khuyến mãi:</strong> {_fmt_currency(mean_post)} (Dip: <strong>{dip:.1f}%</strong> vs Baseline)</li>
+        </ul>
+    </div>
+    """))
+
+
+def plot_product_performance(
+    dfs: Dict[str, pd.DataFrame], master_df: pd.DataFrame,
+    save_fig: bool = True
+) -> None:
+    """Deep-dive product performance: revenue, margin, sizing, color, returns.
+
+    Parameters:
+        dfs (Dict[str, pd.DataFrame]): Dictionary of loaded DataFrames
+        master_df (pd.DataFrame): Master transaction dataframe
+        save_fig (bool): Whether to save figures to disk
+    """
+    set_plot_style()
+    products = dfs['products']
+    returns = dfs['returns']
+    order_items = dfs['order_items']
+
+    # ── 1. Revenue & Margin by Category ──────────────────────────────
+    cat_perf = master_df.groupby('category').agg(
+        revenue=('net_revenue', 'sum'),
+        profit=('gross_profit', 'sum'),
+        qty=('quantity', 'sum')
+    ).reset_index()
+    cat_perf['margin_pct'] = (
+        cat_perf['profit'] / cat_perf['revenue'] * 100
+    )
+    cat_perf = cat_perf.sort_values('revenue', ascending=False)
+
+    fig, ax1 = plt.subplots(figsize=(12, 6))
+    ax2 = ax1.twinx()
+
+    x = np.arange(len(cat_perf))
+    ax1.bar(x, cat_perf['revenue'] / 1e9,
+            color=PALETTE['primary'], alpha=0.85, width=0.45, label='Revenue')
+    ax1.bar(x + 0.45, cat_perf['profit'] / 1e9,
+            color=PALETTE['secondary'], alpha=0.85, width=0.45, label='Gross Profit')
+    ax2.plot(x + 0.225, cat_perf['margin_pct'],
+             color=PALETTE['accent'], marker='o', linewidth=3,
+             markersize=10, label='Margin %')
+
+    ax1.set_xticks(x + 0.225)
+    ax1.set_xticklabels(cat_perf['category'])
+    ax1.set_title('1. Revenue & Gross Profit theo Category')
+    ax1.set_ylabel('Giá trị (Tỷ VNĐ)', color=PALETTE['primary'])
+    ax2.set_ylabel('Margin %', color=PALETTE['accent'])
+    ax1.tick_params(axis='y', labelcolor=PALETTE['primary'])
+    ax2.tick_params(axis='y', labelcolor=PALETTE['accent'])
+
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+    format_spines(ax1, right_border=True)
+    plt.tight_layout()
+    if save_fig:
+        fig.savefig(FIG_DIR / 'prod_01_revenue_margin_category.png',
+                    dpi=150, bbox_inches='tight')
+    plt.show()
+
+    # ── 2. Top 10 Best-seller vs Worst-seller ────────────────────────
+    prod_qty = master_df.groupby('product_name')['quantity'].sum().reset_index()
+
+    top10 = prod_qty.nlargest(10, 'quantity').sort_values('quantity')
+    bot10 = prod_qty.nsmallest(10, 'quantity').sort_values('quantity', ascending=False)
+
+    fig, (ax_top, ax_bot) = plt.subplots(1, 2, figsize=(16, 7))
+
+    ax_top.barh(top10['product_name'], top10['quantity'],
+                color=PALETTE['primary'], alpha=0.9)
+    ax_top.set_title('Top 10 Sản phẩm Bán chạy nhất')
+    ax_top.set_xlabel('Số lượng bán')
+    _label_hbars(ax_top, fmt_fn=lambda v: f"{int(v):,}")
+    format_spines(ax_top)
+
+    ax_bot.barh(bot10['product_name'], bot10['quantity'],
+                color=PALETTE['danger'], alpha=0.9)
+    ax_bot.set_title('Top 10 Sản phẩm Bán chậm nhất')
+    ax_bot.set_xlabel('Số lượng bán')
+    _label_hbars(ax_bot, fmt_fn=lambda v: f"{int(v):,}")
+    format_spines(ax_bot)
+
+    plt.suptitle('2. So sánh sản phẩm Bán chạy vs Bán chậm',
+                 fontsize=14, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    if save_fig:
+        fig.savefig(FIG_DIR / 'prod_02_top_bottom_products.png',
+                    dpi=150, bbox_inches='tight')
+    plt.show()
+
+    # ── 3. Size Distribution ─────────────────────────────────────────
+    size_order = ['S', 'M', 'L', 'XL']
+    size_dist = master_df.groupby('size')['quantity'].sum().reset_index()
+    size_dist['size'] = pd.Categorical(
+        size_dist['size'], categories=size_order, ordered=True
+    )
+    size_dist = size_dist.sort_values('size')
+    size_dist['pct'] = size_dist['quantity'] / size_dist['quantity'].sum() * 100
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    bars = ax.bar(size_dist['size'].astype(str), size_dist['quantity'],
+                  color=[PALETTE['blue'], PALETTE['primary'],
+                         PALETTE['secondary'], PALETTE['accent']])
+    _label_vbars(ax, fmt_fn=lambda v: f"{int(v):,}")
+    ax.set_title('3. Phân bố Số lượng bán theo Kích cỡ (Size)')
+    ax.set_xlabel('Kích cỡ')
+    ax.set_ylabel('Số lượng bán')
+    format_spines(ax)
+    plt.tight_layout()
+    if save_fig:
+        fig.savefig(FIG_DIR / 'prod_03_size_distribution.png',
+                    dpi=150, bbox_inches='tight')
+    plt.show()
+
+    # ── 4. Color Popularity ──────────────────────────────────────────
+    color_df = master_df.merge(
+        products[['product_id', 'color']], on='product_id', how='left'
+    )
+    color_dist = color_df.groupby('color')['quantity'].sum().reset_index()
+    color_dist = color_dist.sort_values('quantity', ascending=True)
+
+    color_map = {
+        'black': '#2B2B2B', 'white': '#CCCCCC', 'red': '#E63946',
+        'blue': '#457B9D', 'green': '#2A9D8F', 'yellow': '#E9C46A',
+        'orange': '#F4A261', 'pink': '#FFB4C2', 'purple': '#9B5DE5',
+        'silver': '#A8A9AD'
+    }
+    bar_colors = [color_map.get(c, PALETTE['neutral']) for c in color_dist['color']]
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.barh(color_dist['color'], color_dist['quantity'],
+            color=bar_colors, alpha=0.9, edgecolor='white', linewidth=0.5)
+    _label_hbars(ax, fmt_fn=lambda v: f"{int(v):,}")
+    ax.set_title('4. Mức độ phổ biến theo Màu sắc sản phẩm')
+    ax.set_xlabel('Số lượng bán')
+    ax.set_ylabel('Màu sắc')
+    format_spines(ax)
+    plt.tight_layout()
+    if save_fig:
+        fig.savefig(FIG_DIR / 'prod_04_color_popularity.png',
+                    dpi=150, bbox_inches='tight')
+    plt.show()
+
+    # ── 5. Return Rate by Category × Size Heatmap ────────────────────
+    items_prod = order_items.merge(products, on='product_id', how='left')
+    ordered_cs = items_prod.groupby(
+        ['category', 'size']
+    )['quantity'].sum().reset_index(name='ordered_qty')
+
+    returns_prod = returns.merge(products, on='product_id', how='left')
+    returned_cs = returns_prod.groupby(
+        ['category', 'size']
+    )['return_quantity'].sum().reset_index(name='returned_qty')
+
+    cs_merged = ordered_cs.merge(
+        returned_cs, on=['category', 'size'], how='left'
+    ).fillna(0)
+    cs_merged['return_rate'] = (
+        cs_merged['returned_qty'] / cs_merged['ordered_qty'] * 100
+    )
+    heatmap = cs_merged.pivot(
+        index='category', columns='size', values='return_rate'
+    )
+    heatmap = heatmap.reindex(
+        columns=[s for s in size_order if s in heatmap.columns]
+    )
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    sns.heatmap(
+        heatmap, annot=True, fmt='.1f', cmap='Reds',
+        linewidths=1, linecolor='white', cbar_kws={'label': 'Return Rate (%)'},
+        ax=ax
+    )
+    ax.set_title('5. Tỷ lệ hoàn hàng: Category × Size')
+    ax.set_xlabel('Kích cỡ')
+    ax.set_ylabel('Danh mục')
+    plt.tight_layout()
+    if save_fig:
+        fig.savefig(FIG_DIR / 'prod_05_return_rate_heatmap.png',
+                    dpi=150, bbox_inches='tight')
+    plt.show()
+
+    # ── 6. Price Tier Analysis ───────────────────────────────────────
+    tier_df = master_df.copy()
+    tier_df['price_tier'] = pd.qcut(
+        tier_df['price'], q=4,
+        labels=['Thấp', 'Trung bình', 'Cao', 'Premium'],
+        duplicates='drop'
+    )
+
+    tier_perf = tier_df.groupby('price_tier', observed=True).agg(
+        revenue=('net_revenue', 'sum'),
+        profit=('gross_profit', 'sum'),
+        qty=('quantity', 'sum'),
+        orders=('order_id', 'nunique')
+    ).reset_index()
+    tier_perf['margin_pct'] = (
+        tier_perf['profit'] / tier_perf['revenue'] * 100
+    )
+    tier_perf['aov'] = tier_perf['revenue'] / tier_perf['orders']
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+    tier_colors = [PALETTE['blue'], PALETTE['primary'],
+                   PALETTE['accent'], PALETTE['purple']]
+    ax1.bar(tier_perf['price_tier'].astype(str), tier_perf['revenue'] / 1e9,
+            color=tier_colors, alpha=0.85)
+    _label_vbars(ax1, fmt_fn=lambda v: f"{v:.2f} Tỷ")
+    ax1.set_title('Revenue theo Phân khúc giá')
+    ax1.set_xlabel('Phân khúc giá')
+    ax1.set_ylabel('Doanh thu (Tỷ VNĐ)')
+    format_spines(ax1)
+
+    ax2.bar(tier_perf['price_tier'].astype(str), tier_perf['margin_pct'],
+            color=tier_colors, alpha=0.85)
+    _label_vbars(ax2, fmt_fn=lambda v: f"{v:.1f}%")
+    ax2.set_title('Margin % theo Phân khúc giá')
+    ax2.set_xlabel('Phân khúc giá')
+    ax2.set_ylabel('Biên lợi nhuận gộp (%)')
+    format_spines(ax2)
+
+    plt.suptitle('6. Price Tier Analysis: Hiệu suất theo Phân khúc giá',
+                 fontsize=14, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    if save_fig:
+        fig.savefig(FIG_DIR / 'prod_06_price_tier_analysis.png',
+                    dpi=150, bbox_inches='tight')
+    plt.show()
+
+    # ── 7. Product Lifecycle ─────────────────────────────────────────
+    orders_df = dfs['orders']
+    lifecycle = master_df.merge(
+        orders_df[['order_id', 'order_date']], on='order_id', how='left',
+        suffixes=('', '_dup')
+    )
+    lifecycle['order_date'] = pd.to_datetime(
+        lifecycle['order_date'], errors='coerce'
+    )
+
+    # Approximate launch date = first order date per product
+    launch_dates = lifecycle.groupby(
+        'product_id'
+    )['order_date'].min().reset_index(name='launch_date')
+
+    lifecycle = lifecycle.merge(launch_dates, on='product_id', how='left')
+    lifecycle['age_days'] = (
+        lifecycle['order_date'] - lifecycle['launch_date']
+    ).dt.days
+
+    # Classify: New (< 180 days), Growth (180-365), Mature (> 365)
+    def _classify_lifecycle(age):
+        if pd.isna(age):
+            return 'Unknown'
+        if age < 180:
+            return 'Mới (<6 tháng)'
+        elif age < 365:
+            return 'Tăng trưởng (6-12 tháng)'
+        else:
+            return 'Trưởng thành (>12 tháng)'
+
+    lifecycle['stage'] = lifecycle['age_days'].apply(_classify_lifecycle)
+
+    stage_order = ['Mới (<6 tháng)', 'Tăng trưởng (6-12 tháng)',
+                   'Trưởng thành (>12 tháng)']
+    stage_perf = lifecycle.groupby('stage').agg(
+        revenue=('net_revenue', 'sum'),
+        profit=('gross_profit', 'sum'),
+        qty=('quantity', 'sum'),
+        products=('product_id', 'nunique')
+    ).reindex(stage_order).reset_index()
+    stage_perf['margin_pct'] = (
+        stage_perf['profit'] / stage_perf['revenue'] * 100
+    )
+    stage_perf['rev_per_product'] = (
+        stage_perf['revenue'] / stage_perf['products']
+    )
+
+    stage_colors = [PALETTE['secondary'], PALETTE['primary'], PALETTE['blue']]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+    ax1.bar(stage_perf['stage'], stage_perf['revenue'] / 1e9,
+            color=stage_colors, alpha=0.85)
+    _label_vbars(ax1, fmt_fn=lambda v: f"{v:.2f} Tỷ")
+    ax1.set_title('Revenue theo Giai đoạn Vòng đời')
+    ax1.set_xlabel('Giai đoạn')
+    ax1.set_ylabel('Doanh thu (Tỷ VNĐ)')
+    ax1.tick_params(axis='x', rotation=15)
+    format_spines(ax1)
+
+    ax2.bar(stage_perf['stage'], stage_perf['margin_pct'],
+            color=stage_colors, alpha=0.85)
+    _label_vbars(ax2, fmt_fn=lambda v: f"{v:.1f}%")
+    ax2.set_title('Margin % theo Giai đoạn Vòng đời')
+    ax2.set_xlabel('Giai đoạn')
+    ax2.set_ylabel('Biên lợi nhuận gộp (%)')
+    ax2.tick_params(axis='x', rotation=15)
+    format_spines(ax2)
+
+    plt.suptitle('7. Product Lifecycle: Sản phẩm Mới vs Trưởng thành',
+                 fontsize=14, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    if save_fig:
+        fig.savefig(FIG_DIR / 'prod_07_product_lifecycle.png',
+                    dpi=150, bbox_inches='tight')
+    plt.show()
+
+def plot_geographic_analysis(
+    dfs: Dict[str, pd.DataFrame], master_df: pd.DataFrame,
+    save_fig: bool = True
+) -> None:
+    """Geographic deep-dive: revenue, AOV, returns, delivery, seasonality by region.
+
+    Parameters:
+        dfs (Dict[str, pd.DataFrame]): Dictionary of loaded DataFrames
+        master_df (pd.DataFrame): Master transaction dataframe
+        save_fig (bool): Whether to save figures to disk
+    """
+    set_plot_style()
+    orders = dfs['orders']
+    geography = dfs['geography']
+    returns = dfs['returns']
+    shipments = dfs['shipments']
+
+    # Merge master with geography
+    master_geo = master_df.merge(geography, on='zip', how='left')
+
+    # ── 1. Revenue & AOV by Region ───────────────────────────────────
+    region_perf = master_geo.groupby('region').agg(
+        revenue=('net_revenue', 'sum'),
+        orders=('order_id', 'nunique')
+    ).reset_index()
+    region_perf['aov'] = region_perf['revenue'] / region_perf['orders']
+    region_perf = region_perf.sort_values('revenue', ascending=False)
+
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+    ax2 = ax1.twinx()
+
+    x = np.arange(len(region_perf))
+    ax1.bar(x, region_perf['revenue'] / 1e9,
+            color=PALETTE['primary'], alpha=0.85, width=0.5)
+    ax2.plot(x, region_perf['aov'],
+             color=PALETTE['accent'], marker='D', linewidth=3,
+             markersize=12)
+
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(region_perf['region'], fontsize=12)
+    ax1.set_title('1. Tổng Doanh thu & AOV theo Khu vực')
+    ax1.set_ylabel('Tổng Doanh thu (Tỷ VNĐ)', color=PALETTE['primary'])
+    ax2.set_ylabel('AOV (VNĐ)', color=PALETTE['accent'])
+    ax1.tick_params(axis='y', labelcolor=PALETTE['primary'])
+    ax2.tick_params(axis='y', labelcolor=PALETTE['accent'])
+
+    # Add AOV value annotations
+    for i, val in enumerate(region_perf['aov']):
+        ax2.annotate(f'{val:,.0f}', (i, val),
+                     textcoords="offset points", xytext=(0, 12),
+                     ha='center', fontsize=11, fontweight='bold',
+                     color=PALETTE['accent'])
+
+    format_spines(ax1, right_border=True)
+    plt.tight_layout()
+    if save_fig:
+        fig.savefig(FIG_DIR / 'geo_01_revenue_aov_region.png',
+                    dpi=150, bbox_inches='tight')
+    plt.show()
+
+    # ── 2. Return Rate by Region ─────────────────────────────────────
+    orders_geo = orders.merge(geography, on='zip', how='left')
+    returns_orders = returns.merge(
+        orders_geo[['order_id', 'region']], on='order_id', how='left'
+    )
+
+    region_ordered = master_geo.groupby('region')['quantity'].sum()
+    region_returned = returns_orders.groupby('region')['return_quantity'].sum()
+
+    return_rate_region = (
+        (region_returned / region_ordered * 100).reset_index(name='return_rate')
+    )
+    return_rate_region = return_rate_region.sort_values(
+        'return_rate', ascending=True
+    )
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.barh(return_rate_region['region'],
+            return_rate_region['return_rate'],
+            color=PALETTE['danger'], alpha=0.85)
+    _label_hbars(ax, fmt_fn=lambda v: f"{v:.2f}%")
+    ax.set_title('2. Tỷ lệ Hoàn hàng theo Khu vực')
+    ax.set_xlabel('Tỷ lệ hoàn hàng (%)')
+    ax.set_ylabel('Khu vực')
+    format_spines(ax)
+    plt.tight_layout()
+    if save_fig:
+        fig.savefig(FIG_DIR / 'geo_02_return_rate_region.png',
+                    dpi=150, bbox_inches='tight')
+    plt.show()
+
+    # ── 3. Delivery Lead Time by Region (Boxplot) ────────────────────
+    ship_geo = shipments.merge(
+        orders_geo[['order_id', 'region', 'order_date']], on='order_id', how='inner'
+    )
+    ship_geo['order_date'] = pd.to_datetime(ship_geo['order_date'])
+    ship_geo['delivery_date'] = pd.to_datetime(ship_geo['delivery_date'])
+    ship_geo['lead_time'] = (
+        ship_geo['delivery_date'] - ship_geo['order_date']
+    ).dt.days
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    region_order = ['East', 'Central', 'West']
+    available_regions = [r for r in region_order
+                         if r in ship_geo['region'].unique()]
+    sns.boxplot(
+        data=ship_geo[ship_geo['region'].isin(available_regions)],
+        x='region', y='lead_time',
+        order=available_regions,
+        palette=[PALETTE['blue'], PALETTE['primary'], PALETTE['accent']],
+        ax=ax, showfliers=False
+    )
+    ax.set_title('3. Thời gian Giao hàng (Lead Time) theo Khu vực')
+    ax.set_xlabel('Khu vực')
+    ax.set_ylabel('Thời gian giao hàng (Ngày)')
+    format_spines(ax)
+    plt.tight_layout()
+    if save_fig:
+        fig.savefig(FIG_DIR / 'geo_03_leadtime_boxplot.png',
+                    dpi=150, bbox_inches='tight')
+    plt.show()
+
+    # ── 4. Seasonal Revenue by Region ────────────────────────────────
+    master_geo['order_month_num'] = pd.to_datetime(
+        master_geo['order_date']
+    ).dt.month
+    seasonal = master_geo.groupby(
+        ['region', 'order_month_num']
+    )['net_revenue'].sum().reset_index()
+
+    fig, ax = plt.subplots(figsize=(14, 6))
+    region_colors = {
+        'East': PALETTE['primary'],
+        'Central': PALETTE['accent'],
+        'West': PALETTE['blue']
+    }
+    for region in available_regions:
+        subset = seasonal[seasonal['region'] == region].sort_values(
+            'order_month_num'
+        )
+        ax.plot(subset['order_month_num'], subset['net_revenue'] / 1e9,
+                marker='o', linewidth=2.5, markersize=7,
+                color=region_colors.get(region, PALETTE['neutral']),
+                label=region)
+
+    ax.set_xticks(range(1, 13))
+    ax.set_xticklabels([
+        'T1', 'T2', 'T3', 'T4', 'T5', 'T6',
+        'T7', 'T8', 'T9', 'T10', 'T11', 'T12'
+    ])
+    ax.set_title('4. Xu hướng Doanh thu theo Tháng & Khu vực')
+    ax.set_xlabel('Tháng')
+    ax.set_ylabel('Doanh thu (Tỷ VNĐ)')
+    ax.legend(title='Khu vực')
+    format_spines(ax)
+    plt.tight_layout()
+    if save_fig:
+        fig.savefig(FIG_DIR / 'geo_04_seasonal_revenue_region.png',
+                    dpi=150, bbox_inches='tight')
+    plt.show()
