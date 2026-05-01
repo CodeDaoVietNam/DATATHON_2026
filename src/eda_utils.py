@@ -2080,6 +2080,225 @@ def plot_segment_profitability(
                     dpi=150, bbox_inches='tight')
     plt.show()
 
+
+def plot_cross_table_diagnostics(
+    dfs: Dict[str, pd.DataFrame], 
+    inv_lost: pd.DataFrame, 
+    save_fig: bool = True
+) -> None:
+    """Dashboard 1x3: Cross-table Checks for Promotion, Traffic, Returns.
+    
+    Parameters:
+        dfs (Dict[str, pd.DataFrame]): Dictionary of loaded datasets.
+        inv_lost (pd.DataFrame): Output from estimate_stockout_impact().
+        save_fig (bool): Whether to save figure to disk.
+    """
+    set_plot_style()
+    
+    promotions = dfs['promotions'].copy()
+    web_traffic = dfs['traffic'].copy()
+    returns = dfs['returns'].copy()
+    order_items = dfs['order_items'].copy()
+    inventory = dfs['inventory'].copy()
+    products = dfs['products'].copy()
+    
+    BACKGROUND = 'white'
+    TEXT = '#2B3A42'
+    MUTED = '#7f8c8d'
+
+    def _clean_axis(ax: plt.Axes, title: str, xlabel: str, ylabel: str,
+                   subtitle: Optional[str] = None) -> None:
+        """Clean and format axes locally."""
+        ax.set_title(title, fontsize=13, fontweight='bold', loc='left', pad=15)
+        if subtitle:
+            ax.text(0, 1.02, subtitle, transform=ax.transAxes,
+                   fontsize=10, color=MUTED, style='italic')
+        ax.set_xlabel(xlabel, fontweight='bold')
+        ax.set_ylabel(ylabel, fontweight='bold')
+        format_spines(ax)
+
+    # ---------------------------------------------------------
+    # 1) Promotion overlap at category-month level
+    # ---------------------------------------------------------
+    inv_cross = inv_lost.copy()
+    inv_cross['year_month_period'] = inv_cross['snapshot_date'].dt.to_period('M')
+    inv_cross['month_start'] = inv_cross['year_month_period'].dt.to_timestamp()
+    inv_cross['month_end'] = inv_cross['year_month_period'].dt.to_timestamp('M')
+
+    promo_rows = []
+    unique_combinations = inv_cross[['year_month_period', 'month_start', 'month_end', 'category']].drop_duplicates()
+    
+    for _, row in unique_combinations.iterrows():
+        active = promotions[
+            (promotions['start_date'] <= row['month_end']) & 
+            (promotions['end_date'] >= row['month_start'])
+        ]
+        active = active[
+            active['applicable_category'].isna() |
+            (active['applicable_category'].astype(str).str.lower() == str(row['category']).lower())
+        ]
+        promo_rows.append({
+            'year_month_period': row['year_month_period'],
+            'category': row['category'],
+            'promo_active': len(active) > 0,
+            'active_promos': len(active),
+            'avg_discount': active['discount_value'].mean() if len(active) else 0
+        })
+    promo_month_category = pd.DataFrame(promo_rows)
+
+    inv_promo = inv_cross.merge(promo_month_category, on=['year_month_period', 'category'], how='left')
+    promo_impact = (
+        inv_promo.groupby('promo_active')
+        .agg(
+            records=('product_id', 'size'),
+            stockout_rate=('stockout_flag', 'mean'),
+            overstock_rate=('overstock_flag', 'mean'),
+            lost_revenue=('lost_revenue_est', 'sum'),
+            units_sold=('units_sold', 'sum')
+        ).reset_index()
+    )
+
+    # ---------------------------------------------------------
+    # 2) Web traffic at month level
+    # ---------------------------------------------------------
+    monthly_inventory = (
+        inv_lost.assign(year_month=inv_lost['snapshot_date'].dt.to_period('M').astype(str))
+        .groupby('year_month')
+        .agg(stockout_rate=('stockout_flag', 'mean'), 
+             lost_revenue=('lost_revenue_est', 'sum'), 
+             units_sold=('units_sold', 'sum'))
+        .reset_index()
+    )
+    
+    monthly_traffic = (
+        web_traffic.assign(year_month=web_traffic['date'].dt.to_period('M').astype(str))
+        .groupby('year_month')
+        .agg(sessions=('sessions', 'sum'), 
+             unique_visitors=('unique_visitors', 'sum'), 
+             page_views=('page_views', 'sum'))
+        .reset_index()
+    )
+    
+    traffic_inventory = monthly_inventory.merge(monthly_traffic, on='year_month', how='inner')
+    traffic_lost_corr = traffic_inventory['sessions'].corr(traffic_inventory['lost_revenue'])
+
+    # ---------------------------------------------------------
+    # 3) Returns vs overstock at product level
+    # ---------------------------------------------------------
+    returns_product = returns.groupby('product_id').agg(
+        return_quantity=('return_quantity', 'sum'), 
+        refund_amount=('refund_amount', 'sum')
+    ).reset_index()
+    
+    ordered_product = order_items.groupby('product_id').agg(
+        ordered_quantity=('quantity', 'sum')
+    ).reset_index()
+    
+    return_rate_product = ordered_product.merge(returns_product, on='product_id', how='left').fillna({'return_quantity': 0, 'refund_amount': 0})
+    return_rate_product['return_rate_qty'] = np.where(
+        return_rate_product['ordered_quantity'] > 0, 
+        return_rate_product['return_quantity'] / return_rate_product['ordered_quantity'], 
+        np.nan
+    )
+    
+    # Create proxy for matrix_df (Product Level Inventory Summary)
+    prod_inv = inventory.groupby('product_id').agg(
+        overstock_rate=('overstock_flag', 'mean'),
+    ).reset_index()
+    
+    prod_inv['inventory_group'] = pd.cut(
+        prod_inv['overstock_rate'], 
+        bins=[-np.inf, 0, 0.5, np.inf], 
+        labels=['No Overstock', 'Low Overstock Risk', 'High Overstock Risk']
+    )
+    
+    returns_inventory = prod_inv.merge(
+        return_rate_product[['product_id', 'return_rate_qty', 'return_quantity']], 
+        on='product_id', how='left'
+    )
+    
+    returns_impact = (
+        returns_inventory.groupby('inventory_group', observed=True)
+        .agg(
+            products=('product_id', 'nunique'), 
+            avg_return_rate=('return_rate_qty', 'mean'), 
+            avg_overstock_rate=('overstock_rate', 'mean')
+        ).reset_index()
+    )
+    
+    return_overstock_corr = returns_inventory['return_rate_qty'].corr(returns_inventory['overstock_rate'])
+
+    # ---------------------------------------------------------
+    # Plotting
+    # ---------------------------------------------------------
+    fig, axes = plt.subplots(1, 3, figsize=(19, 5.8), facecolor=BACKGROUND)
+
+    # Panel 1: Promotion vs Stockout
+    promo_plot = promo_impact.copy()
+    promo_plot['label'] = promo_plot['promo_active'].map({True: 'Promo Active', False: 'No Promo'})
+    colors_1 = [PALETTE['accent'] if x else PALETTE['neutral'] for x in promo_plot['promo_active']]
+    
+    axes[0].bar(promo_plot['label'], promo_plot['stockout_rate'], color=colors_1, edgecolor='white')
+    _clean_axis(axes[0], 'Promotion vs Stockout Rate', 'Promotion Status', 'Stockout Rate', 
+                subtitle='Category-month promo overlap')
+    axes[0].yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
+    _label_vbars(axes[0], fmt_fn=lambda v: _fmt_percent(v))
+
+    # Panel 2: Traffic vs Lost Revenue
+    axes[1].scatter(traffic_inventory['sessions'], traffic_inventory['lost_revenue'], 
+                    color=PALETTE['stockout'], alpha=0.75, edgecolor='white', s=80)
+    
+    # Add trendline for clarity
+    if len(traffic_inventory) > 1:
+        z = np.polyfit(traffic_inventory['sessions'], traffic_inventory['lost_revenue'], 1)
+        p = np.poly1d(z)
+        axes[1].plot(traffic_inventory['sessions'], p(traffic_inventory['sessions']), 
+                     color=PALETTE['danger'], linestyle='--', alpha=0.6)
+
+    _clean_axis(axes[1], 'Traffic vs Lost Revenue', 'Monthly Sessions', 'Lost Revenue', 
+                subtitle=f'Correlation (r) = {_fmt_number(traffic_lost_corr, 2)}')
+    axes[1].xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: f"{x/1e6:.1f}M"))
+    axes[1].yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: _fmt_currency(x, 0)))
+
+    # Panel 3: Return Rate by Inventory Group
+    returns_plot = returns_impact.dropna(subset=['avg_return_rate']).sort_values('avg_return_rate', ascending=True)
+    
+    group_colors = {
+        'No Overstock': PALETTE['stable'],
+        'Low Overstock Risk': PALETTE['warning'],
+        'High Overstock Risk': PALETTE['overstock']
+    }
+    colors_3 = returns_plot['inventory_group'].map(group_colors).fillna(PALETTE['neutral'])
+    
+    axes[2].barh(returns_plot['inventory_group'], returns_plot['avg_return_rate'], 
+                 color=colors_3, edgecolor='white')
+    _clean_axis(axes[2], 'Return Rate by Overstock Risk', 'Avg Return Rate', 'Inventory Group', 
+                subtitle=f'Return-Overstock Corr = {_fmt_number(return_overstock_corr, 2)}')
+    axes[2].xaxis.set_major_formatter(ticker.PercentFormatter(1.0))
+    _label_hbars(axes[2], fmt_fn=lambda v: _fmt_percent(v), offset=0.02)
+
+    plt.tight_layout()
+    if save_fig:
+        fig.savefig(FIG_DIR / '19_cross_table_diagnostics.png', dpi=150, bbox_inches='tight')
+    plt.show()
+    
+    # In ra DataFrames dạng display tương tự mã gốc của bạn
+    print("--- Tổng hợp Insight Cross-table ---")
+    cross_table_summary = pd.DataFrame({
+        'Check': ['Promotion overlap', 'Web traffic overlap', 'Returns vs overstock'],
+        'Main metric': [
+            f"Promo-active stockout: {_fmt_percent(promo_impact.loc[promo_impact['promo_active'] == True, 'stockout_rate'].iloc[0]) if True in promo_impact['promo_active'].values else 'NA'}",
+            f"Traffic-lost revenue corr: {_fmt_number(traffic_lost_corr, 2)}",
+            f"Return-overstock corr: {_fmt_number(return_overstock_corr, 2)}"
+        ],
+        'Business read': [
+            'Use to check campaign inventory readiness.',
+            'Market-level signal only; traffic is not SKU-level.',
+            'Low correlation means returns are unlikely to be the main overstock driver.'
+        ]
+    })
+    display(cross_table_summary)
+
 def section_header(title: str, subtitle: str = '') -> None:
     """Display a professional section header in the notebook.
     
